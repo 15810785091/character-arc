@@ -34,6 +34,7 @@ import type { ConversationManager } from './conversation-manager'
 import { stagedChangesStore, type StagedChangeCommitter } from './staged-changes-store'
 import { AgentLoop, type AgentLoopRunResult, type ToolFactory } from './agent-loop'
 import { configureRuntimeState, getSharedConversation } from './state'
+import { finalizeCommitBatch } from './commit-result'
 import type { EvidenceLedger } from './evidence-ledger'
 import type { AssistantRuntimePlan } from './planner'
 
@@ -63,6 +64,8 @@ export interface AssistantIpcDeps {
   resolveTurnExecutionPlan?: ResolveTurnExecutionPlan
   /** Phase 2 注入。缺省时 stage:commit 通道拒绝服务。 */
   commitChange?: StagedChangeCommitter
+  /** 至少一项写回成功后刷新工作区快照；刷新失败不改变写库结果。 */
+  afterCommit?: () => Promise<void> | void
   /** 可选：把 v2 turn 记录到既有 AI 运行日志。 */
   emitAiRunEvent?: (payload: { projectId: string; meta: Record<string, unknown> }) => void
 }
@@ -483,10 +486,11 @@ function registerStageHandlers(): void {
       if ((!payload.changeIds || payload.changeIds.length === 0) && !payload.sessionId) {
         throw new Error('stage commit requires sessionId when changeIds is omitted')
       }
-      return stagedChangesStore.commit(committer, {
+      const results = await stagedChangesStore.commit(committer, {
         sessionId: payload.sessionId,
         changeIds: payload.changeIds
       })
+      return finalizeCommitBatch(results, deps?.afterCommit)
     }
   )
 }

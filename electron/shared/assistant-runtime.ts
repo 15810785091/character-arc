@@ -178,8 +178,28 @@ export interface StagedChangeCommitResult {
   ok: boolean
   /** commit 成功后，实体在业务库中的最终 id（create 时新分配）。 */
   entityId?: string
+  /** 供 UI 区分冲突、数据缺失和临时故障。 */
+  errorCode?: StagedChangeCommitErrorCode
+  /** 面向用户的失败原因，不包含内部堆栈。 */
+  message?: string
   error?: string
+  /** 用户可执行的下一步处理建议。 */
+  suggestion?: string
+  /** true 表示不修改提案即可直接重试。 */
+  retryable?: boolean
+  /** 业务数据已写入，但界面同步未完成。 */
+  warning?: string
 }
+
+export type StagedChangeCommitErrorCode =
+  | 'WORKSPACE_SAVE_FAILED'
+  | 'STALE_DATA'
+  | 'DUPLICATE'
+  | 'TARGET_NOT_FOUND'
+  | 'INVALID_CHANGE'
+  | 'DATABASE_BUSY'
+  | 'SESSION_NOT_FOUND'
+  | 'UNKNOWN'
 
 // ============================================================================
 // Context Providers

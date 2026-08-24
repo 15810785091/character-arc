@@ -16,6 +16,7 @@ import type {
   AssistantTurn,
   PersistedTurnEvent,
   StagedChange,
+  StagedChangeCommitResult,
   SurfaceDefinition,
   TurnAttachment,
   TurnEvent,
@@ -161,6 +162,7 @@ export function useAssistant(options: UseAssistantOptions) {
 
   // === 暂存变更 ===
   const stagedChanges = ref<StagedChange[]>([])
+  const commitResults = ref<StagedChangeCommitResult[]>([])
   const pendingStaged = computed(() =>
     stagedChanges.value.filter((c) => c.status === 'pending' || c.status === 'streaming')
   )
@@ -453,6 +455,7 @@ export function useAssistant(options: UseAssistantOptions) {
       turns.value = []
       eventsByTurn.value = new Map()
       stagedChanges.value = []
+      commitResults.value = []
       streamingTurnId.value = null
       cancelEditing()
       restoredDraftLabel.value = ''
@@ -540,6 +543,7 @@ export function useAssistant(options: UseAssistantOptions) {
     turns.value = []
     eventsByTurn.value = new Map()
     stagedChanges.value = []
+    commitResults.value = []
     streamingTurnId.value = null
     isCanceling.value = false
     cancelEditing()
@@ -559,6 +563,7 @@ export function useAssistant(options: UseAssistantOptions) {
       turns.value = []
       eventsByTurn.value = new Map()
       stagedChanges.value = []
+      commitResults.value = []
       cancelEditing()
       restoredDraftLabel.value = ''
       if (sessions.value.length > 0) {
@@ -609,6 +614,11 @@ export function useAssistant(options: UseAssistantOptions) {
       }
     }
 
+    await appStore.persistWorkspace()
+    if (appStore.persistenceError) {
+      lastError.value = appStore.persistenceError ?? '工作区保存失败，未发送本次请求。'
+      return
+    }
     if (!await appStore.flushAppSettings()) {
       lastError.value = appStore.persistenceError ?? 'AI 设置保存失败，未发送本次请求。'
       return
@@ -785,39 +795,113 @@ export function useAssistant(options: UseAssistantOptions) {
   // ==========================================================================
 
   async function acceptChanges(ids: string[]): Promise<void> {
+    const changedIds = ids.filter((id) =>
+      stagedChanges.value.some((change) => change.id === id && change.status !== 'accepted')
+    )
+    commitResults.value = commitResults.value.filter((result) => !changedIds.includes(result.changeId))
     await A.stageAccept({ changeIds: ids })
     await reloadStaged()
   }
 
   async function rejectChanges(ids: string[]): Promise<void> {
+    commitResults.value = commitResults.value.filter((result) => !ids.includes(result.changeId))
     await A.stageReject({ changeIds: ids })
     await reloadStaged()
   }
 
-  async function commitAccepted(ids?: string[]): Promise<{ committed: number; failed: number }> {
-    if (!activeSessionId.value) return { committed: 0, failed: 0 }
-    const expectedAcceptedCount = ids?.length
-      ? stagedChanges.value.filter((change) =>
-        ids.includes(change.id) && change.status === 'accepted'
-      ).length
-      : acceptedStaged.value.length
-    const results = await A.stageCommit({
-      sessionId: activeSessionId.value,
-      changeIds: ids
-    })
+  async function commitAccepted(ids?: string[]): Promise<{ committed: number; failed: number; warnings: number }> {
+    if (!activeSessionId.value) return { committed: 0, failed: 0, warnings: 0 }
+    const targets = ids?.length
+      ? stagedChanges.value.filter((change) => ids.includes(change.id) && change.status === 'accepted')
+      : acceptedStaged.value
+    if (targets.length === 0) return { committed: 0, failed: 0, warnings: 0 }
+
+    const replaceTargetResults = (results: StagedChangeCommitResult[]): void => {
+      const targetIds = new Set(targets.map((change) => change.id))
+      commitResults.value = [
+        ...commitResults.value.filter((result) => !targetIds.has(result.changeId)),
+        ...results
+      ]
+    }
+    const failAll = (
+      errorCode: StagedChangeCommitResult['errorCode'],
+      message: string,
+      suggestion: string,
+      error?: string
+    ): StagedChangeCommitResult[] => targets.map((change) => ({
+      changeId: change.id,
+      ok: false,
+      errorCode,
+      message,
+      error,
+      suggestion,
+      retryable: true
+    }))
+
+    try {
+      await appStore.persistWorkspace()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      const failures = failAll(
+        'WORKSPACE_SAVE_FAILED',
+        '当前工作区尚未保存，写回已取消，以免覆盖正在编辑的内容。',
+        '请先解决工作区保存问题，然后重试。',
+        detail
+      )
+      replaceTargetResults(failures)
+      lastError.value = '工作区保存失败，暂存变更尚未写回。请查看失败项。'
+      return { committed: 0, failed: failures.length, warnings: 0 }
+    }
+    if (appStore.persistenceError) {
+      const failures = failAll(
+        'WORKSPACE_SAVE_FAILED',
+        '当前工作区尚未保存，写回已取消，以免覆盖正在编辑的内容。',
+        '请先解决工作区保存问题，然后重试。',
+        appStore.persistenceError
+      )
+      replaceTargetResults(failures)
+      lastError.value = '工作区保存失败，暂存变更尚未写回。请查看失败项。'
+      return { committed: 0, failed: failures.length, warnings: 0 }
+    }
+
+    let results: StagedChangeCommitResult[]
+    try {
+      results = await A.stageCommit({
+        sessionId: activeSessionId.value,
+        changeIds: targets.map((change) => change.id)
+      })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      results = failAll(
+        'UNKNOWN',
+        '写回请求未能完成，暂存内容仍然保留。',
+        '请重试；如果仍然失败，请重新打开项目后再试。',
+        detail
+      )
+    }
+    if (results.length === 0) {
+      results = failAll(
+        'UNKNOWN',
+        '没有找到可写回的已确认变更，暂存区状态可能已经变化。',
+        '请重新确认这些提案后再试。'
+      )
+    }
+    replaceTargetResults(results)
     const errors = results.filter((r) => !r.ok)
-    if (results.length === 0 && expectedAcceptedCount > 0) {
-      lastError.value = '没有变更被写回：暂存区状态可能已过期，请刷新后重试。'
-    } else if (errors.length > 0) {
-      lastError.value = `${errors.length} 项提交失败：${errors.map((e) => e.error).join('; ')}`
+    const warnings = results.filter((r) => r.ok && r.warning)
+    if (errors.length > 0) {
+      lastError.value = `${errors.length} 项写回失败，具体原因和处理方式已标在对应暂存项中。`
+    } else if (warnings.length > 0) {
+      lastError.value = warnings[0].warning ?? null
     } else {
       lastError.value = null
     }
     await reloadStaged()
-    return { committed: results.length - errors.length, failed: errors.length }
+    return { committed: results.length - errors.length, failed: errors.length, warnings: warnings.length }
   }
 
   async function bindTarget(changeId: string, entityId: string): Promise<void> {
+    commitResults.value = commitResults.value.filter((result) => result.changeId !== changeId)
     await A.stageBindTarget({ changeId, entityId })
     await reloadStaged()
   }
@@ -834,6 +918,7 @@ export function useAssistant(options: UseAssistantOptions) {
       turns.value = []
       eventsByTurn.value = new Map()
       stagedChanges.value = []
+      commitResults.value = []
       streamingTurnId.value = null
       cancelEditing()
       restoredDraftLabel.value = ''
@@ -852,6 +937,7 @@ export function useAssistant(options: UseAssistantOptions) {
           turns.value = []
           eventsByTurn.value = new Map()
           stagedChanges.value = []
+          commitResults.value = []
           streamingTurnId.value = null
           cancelEditing()
           restoredDraftLabel.value = ''
@@ -872,6 +958,7 @@ export function useAssistant(options: UseAssistantOptions) {
     isInitializing,
     streamingCharCount,
     stagedChanges,
+    commitResults,
     pendingStaged,
     acceptedStaged,
     composerValue,

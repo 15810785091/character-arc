@@ -144,3 +144,26 @@ test('混合提交保持结果顺序，成功项 committed，失败项 accepted'
   assert.equal(store.get(c.id)?.status, 'committed')
   assert.equal(store.get(c.id)?.entityId, `entity-${c.id}`)
 })
+
+test('同一暂存项并发提交时只执行一次写库', async () => {
+  const store = new StagedChangesStore()
+  const change = store.add(makeChange('session-a', '并发城'))
+  store.accept([change.id])
+  let commitCount = 0
+  let releaseCommit
+  const gate = new Promise((resolve) => { releaseCommit = resolve })
+  const committer = async (item) => {
+    commitCount += 1
+    await gate
+    return { changeId: item.id, ok: true, entityId: 'world-concurrent' }
+  }
+
+  const first = store.commit(committer, { changeIds: [change.id] })
+  const second = store.commit(committer, { changeIds: [change.id] })
+  releaseCommit()
+  const [firstResult, secondResult] = await Promise.all([first, second])
+
+  assert.equal(commitCount, 1)
+  assert.deepEqual(firstResult, secondResult)
+  assert.equal(store.get(change.id)?.status, 'committed')
+})

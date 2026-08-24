@@ -21,7 +21,6 @@ import type { StagedChangeCommitter } from './staged-changes-store'
  */
 export interface CreateCommitterDeps {
   resolveProjectId: (sessionId: string) => string | null
-  onCommitted?: () => Promise<void> | void
 }
 
 const WORKFLOW_DOCUMENT_KEYS = new Set<WorkflowDocumentKey>([
@@ -48,11 +47,7 @@ export function createCommitter(deps: CreateCommitterDeps): StagedChangeCommitte
 
     let result: StagedChangeCommitResult
     if (change.action === 'delete') {
-      result = await commitDelete(change, projectId)
-      if (result.ok) {
-        await deps.onCommitted?.()
-      }
-      return result
+      return commitDelete(change, projectId)
     }
 
     switch (change.kind) {
@@ -106,9 +101,6 @@ export function createCommitter(deps: CreateCommitterDeps): StagedChangeCommitte
         }
     }
 
-    if (result.ok) {
-      await deps.onCommitted?.()
-    }
     return result
   }
 }

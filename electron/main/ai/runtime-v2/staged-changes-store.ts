@@ -128,6 +128,7 @@ export class StagedChangesStore {
   private readonly bySession = new Map<string, Set<string>>()
   private readonly byToolUse = new Map<string, string>() // toolUseId → changeId
   private readonly listeners = new Set<StagedChangesListener>()
+  private readonly commitsInFlight = new Map<string, Promise<StagedChangeCommitResult>>()
   private db: DatabaseSync | null = null
   private stmts: StagedChangeStatements | null = null
 
@@ -342,6 +343,22 @@ export class StagedChangesStore {
     const results: StagedChangeCommitResult[] = []
 
     for (const change of targets) {
+      let task = this.commitsInFlight.get(change.id)
+      if (!task) {
+        task = this.commitOne(change, committer)
+        this.commitsInFlight.set(change.id, task)
+      }
+      const result = await task
+      results.push(result)
+    }
+    return results
+  }
+
+  private async commitOne(
+    change: StagedChange,
+    committer: StagedChangeCommitter
+  ): Promise<StagedChangeCommitResult> {
+    try {
       let result: StagedChangeCommitResult
       try {
         result = await committer(change)
@@ -352,7 +369,6 @@ export class StagedChangesStore {
           error: e instanceof Error ? e.message : String(e)
         }
       }
-      results.push(result)
       if (result.ok) {
         this.transition(change.id, (c) => {
           c.status = 'committed'
@@ -360,8 +376,10 @@ export class StagedChangesStore {
           return true
         })
       }
+      return result
+    } finally {
+      this.commitsInFlight.delete(change.id)
     }
-    return results
   }
 
   private collectAcceptedTargets(opts: {

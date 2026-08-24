@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NButton } from 'naive-ui'
-import type { StagedChange } from '@shared/assistant-runtime'
+import { AlertTriangle, RotateCcw } from 'lucide-vue-next'
+import type { StagedChange, StagedChangeCommitResult } from '@shared/assistant-runtime'
 
 const props = defineProps<{
   changes: StagedChange[]
+  commitResults?: StagedChangeCommitResult[]
   isBusy: boolean
   isCommitting?: boolean
 }>()
@@ -34,6 +36,9 @@ const filtered = computed(() => {
 
 const pendingCount = computed(() =>
   props.changes.filter((c) => c.status === 'pending').length
+)
+const failedCount = computed(() =>
+  (props.commitResults ?? []).filter((result) => !result.ok).length
 )
 const acceptedCount = computed(() =>
   props.changes.filter((c) => c.status === 'accepted').length
@@ -174,6 +179,10 @@ function hasTargetCandidates(change: StagedChange): boolean {
 function bindTarget(changeId: string, entityId: string): void {
   emit('bind-target', changeId, entityId)
 }
+
+function commitResult(changeId: string): StagedChangeCommitResult | undefined {
+  return props.commitResults?.find((result) => result.changeId === changeId)
+}
 </script>
 
 <template>
@@ -201,6 +210,31 @@ function bindTarget(changeId: string, entityId: string): void {
           <span>原因</span>
           <strong>{{ reviewingChange.reason }}</strong>
         </div>
+      </div>
+
+      <div
+        v-if="commitResult(reviewingChange.id)?.ok === false"
+        class="commit-issue review-issue"
+        role="alert"
+      >
+        <div class="commit-issue-head">
+          <AlertTriangle :size="15" />
+          <strong>写回失败</strong>
+        </div>
+        <p>{{ commitResult(reviewingChange.id)?.message || commitResult(reviewingChange.id)?.error }}</p>
+        <span v-if="commitResult(reviewingChange.id)?.suggestion">
+          {{ commitResult(reviewingChange.id)?.suggestion }}
+        </span>
+        <NButton
+          v-if="commitResult(reviewingChange.id)?.retryable"
+          size="small"
+          :loading="props.isCommitting"
+          :disabled="props.isBusy || props.isCommitting"
+          @click="emit('commit', [reviewingChange.id])"
+        >
+          <template #icon><RotateCcw :size="14" /></template>
+          重试这项
+        </NButton>
       </div>
 
       <div class="review-body">
@@ -278,6 +312,10 @@ function bindTarget(changeId: string, entityId: string): void {
           <strong>{{ pendingCount }}</strong> 待审阅
           <span class="sep">·</span>
           <strong>{{ acceptedCount }}</strong> 已确认
+          <template v-if="failedCount > 0">
+            <span class="sep">·</span>
+            <strong class="failed-count">{{ failedCount }}</strong> 写回失败
+          </template>
         </div>
       </div>
       <div class="filter">
@@ -307,6 +345,32 @@ function bindTarget(changeId: string, entityId: string): void {
         </div>
         <div class="action-line" :class="'action-' + c.action">{{ actionLabel(c.action) }}</div>
         <div class="reason">{{ c.reason }}</div>
+
+        <div v-if="commitResult(c.id)?.ok === false" class="commit-issue" role="alert">
+          <div class="commit-issue-head">
+            <AlertTriangle :size="15" />
+            <strong>写回失败</strong>
+          </div>
+          <p>{{ commitResult(c.id)?.message || commitResult(c.id)?.error }}</p>
+          <span v-if="commitResult(c.id)?.suggestion">{{ commitResult(c.id)?.suggestion }}</span>
+          <details
+            v-if="commitResult(c.id)?.error && commitResult(c.id)?.error !== commitResult(c.id)?.message"
+            class="commit-technical"
+          >
+            <summary>技术详情</summary>
+            <code>{{ commitResult(c.id)?.error }}</code>
+          </details>
+          <NButton
+            v-if="commitResult(c.id)?.retryable"
+            size="tiny"
+            :loading="props.isCommitting"
+            :disabled="props.isBusy || props.isCommitting"
+            @click="emit('commit', [c.id])"
+          >
+            <template #icon><RotateCcw :size="13" /></template>
+            重试这项
+          </NButton>
+        </div>
 
         <div v-if="hasTargetCandidates(c)" class="target-box compact">
           <div class="target-head">匹配目标</div>
@@ -734,6 +798,9 @@ function bindTarget(changeId: string, entityId: string): void {
   border-color: var(--v2-accent-line, var(--arc-primary));
   background: var(--arc-primary-soft);
 }
+.change:has(.commit-issue) {
+  border-color: var(--v2-danger, #b91c1c);
+}
 .change.rejected {
   opacity: 0.5;
 }
@@ -813,6 +880,56 @@ strong.action-create {
   color: var(--arc-text-secondary);
   margin: 4px 0 8px;
   line-height: 1.5;
+}
+.failed-count {
+  color: var(--v2-danger, #b91c1c) !important;
+}
+.commit-issue {
+  margin: 10px 0 8px;
+  padding: 10px;
+  border-left: 3px solid var(--v2-danger, #b91c1c);
+  border-radius: 6px;
+  background: var(--v2-danger-soft, rgba(185, 28, 28, 0.07));
+  color: var(--arc-text-secondary);
+}
+.review-issue {
+  margin: 12px 16px 0;
+}
+.commit-issue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--v2-danger, #b91c1c);
+}
+.commit-issue-head strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.commit-issue p {
+  margin: 6px 0 4px;
+  color: var(--arc-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.commit-issue > span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.commit-technical {
+  margin: 6px 0 8px;
+  font-size: 11px;
+  color: var(--arc-text-hint);
+}
+.commit-technical summary {
+  cursor: pointer;
+}
+.commit-technical code {
+  display: block;
+  margin-top: 5px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .diff {
   border: 1px solid var(--arc-border);

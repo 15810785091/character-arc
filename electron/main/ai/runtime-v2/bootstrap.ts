@@ -56,8 +56,7 @@ export function bootstrapAssistantRuntime(deps: BootstrapAssistantRuntimeDeps): 
       if (!cm) return null
       const session = cm.getSession(sessionId)
       return session?.projectId ?? null
-    },
-    onCommitted: deps.refreshSnapshot
+    }
   })
 
   // 4. 注册 IPC（内部会 configureRuntimeState）
@@ -65,6 +64,7 @@ export function bootstrapAssistantRuntime(deps: BootstrapAssistantRuntimeDeps): 
     ensureDb: deps.ensureDb,
     resolveTurnExecutionPlan,
     commitChange,
+    afterCommit: deps.refreshSnapshot,
     emitAiRunEvent: deps.emitAiRunEvent
   })
 }
