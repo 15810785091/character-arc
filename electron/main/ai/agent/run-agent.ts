@@ -53,6 +53,18 @@ function shouldSynthesizeFinalAnswer(input: {
     && !input.aborted
 }
 
+const REASONING_REPEAT_BLOCK_SIZES = [256, 384, 512, 768, 1024] as const
+
+/** 只识别较长的连续重复片段，避免正常的短句复述触发误报。 */
+export function hasRepeatedReasoningTail(reasoning: string): boolean {
+  const normalized = reasoning.replace(/\s+/g, ' ').trim()
+  for (const size of REASONING_REPEAT_BLOCK_SIZES) {
+    if (normalized.length < size * 2) continue
+    if (normalized.slice(-size) === normalized.slice(-size * 2, -size)) return true
+  }
+  return false
+}
+
 /**
  * 稳定序列化工具参数：键按字典序排序，让 `{a:1,b:2}` 与 `{b:2,a:1}` 得到同一指纹，
  * 用于识别「同工具 + 同参数」的重复调用。
@@ -141,6 +153,8 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   }
   const onStepFinish = (): void => {
     stepCount++
+    stepReasoning = ''
+    repetitionWarningSent = false
     if (stepCount < maxSteps) {
       params.handlers.onAgentStatus(`第 ${stepCount + 1} 轮推理...`, stepCount + 1, maxSteps)
     }
@@ -148,6 +162,8 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   let fullText = ''
   let firstAttemptReasoning = ''
+  let stepReasoning = ''
+  let repetitionWarningSent = false
 
   const startStream = (
     onReasoningDelta: (delta: string) => void,
@@ -172,6 +188,8 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let streamError: unknown = null
     let retryReasoningLength = 0
+    stepReasoning = ''
+    repetitionWarningSent = false
     const onReasoningDelta = (delta: string): void => {
       if (attempt === 0) {
         firstAttemptReasoning += delta
@@ -194,6 +212,17 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
       for await (const part of currentResult.fullStream) {
         if (part.type === 'reasoning-delta') {
           onReasoningDelta(part.text)
+          if (!params.disableTools && !repetitionWarningSent) {
+            stepReasoning += part.text
+            if (hasRepeatedReasoningTail(stepReasoning)) {
+              repetitionWarningSent = true
+              params.handlers.onAgentStatus(
+                '检测到推理内容可能在重复。当前生成仍在继续，如需停止请点击“停止生成”。',
+                Math.min(stepCount + 1, maxSteps),
+                maxSteps
+              )
+            }
+          }
         } else if (part.type === 'text-delta') {
           fullText += part.text
           params.handlers.onTextDelta(part.text)
