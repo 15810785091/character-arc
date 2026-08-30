@@ -88,6 +88,67 @@ test('项目级全局助手不设置工具次数预算或自动续批', async ()
   assert.equal(ledger.snapshot().budgetExhausted, false)
 })
 
+test('项目级全局助手允许完整读取章节正文', async () => {
+  const surface = {
+    id: 'global-page',
+    scope: 'project',
+    autoCommit: false,
+    maxSteps: 8
+  }
+  const plan = createRuntimePlan({
+    surface,
+    request: {
+      sessionId: 'session-1',
+      surface,
+      userMessage: '请分析第三章后半部分'
+    }
+  })
+  const ledger = createEvidenceLedger()
+  let receivedArgs = null
+  const [tool] = wrapToolsWithRuntimeBudget([{
+    definition: { name: 'read_chapter' },
+    handler: async (input) => {
+      receivedArgs = input
+      return { content: 'ok' }
+    }
+  }], plan, ledger)
+
+  await tool.handler({ chapter_id: 'chapter-1' }, {})
+
+  assert.equal(plan.allowFullChapterRead, true)
+  assert.notEqual(receivedArgs.include_content, false)
+})
+
+test('项目级全局助手对目标章节的 read_project_data 不强制降级为预览', async () => {
+  const surface = {
+    id: 'global-page',
+    scope: 'project',
+    autoCommit: false,
+    maxSteps: 8
+  }
+  const plan = createRuntimePlan({
+    surface,
+    request: {
+      sessionId: 'session-1',
+      surface,
+      userMessage: '请分析第三章后半部分'
+    }
+  })
+  const ledger = createEvidenceLedger()
+  let receivedArgs = null
+  const [tool] = wrapToolsWithRuntimeBudget([{
+    definition: { name: 'read_project_data' },
+    handler: async (input) => {
+      receivedArgs = input
+      return { content: 'ok' }
+    }
+  }], plan, ledger)
+
+  await tool.handler({ entity_type: 'chapters', entity_id: 'chapter-1' }, {})
+
+  assert.equal(receivedArgs.summary_only, undefined)
+})
+
 test('模型没有最终可见文本时将 turn 标记为 error', async () => {
   const { loop, conversation, pushedEvents } = makeLoop(async () => ({
     finalText: '   ',

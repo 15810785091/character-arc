@@ -85,7 +85,7 @@ export function createRuntimePlan(params: {
     maxSearchToolCalls: 2,
     maxStageChanges: intent === 'ingest' || intent === 'correct' || isEdit ? 5 : 2,
     defaultReadLimit: requiresBatching ? 5 : 3,
-    allowFullChapterRead: isEdit || params.surface.scope === 'selection',
+    allowFullChapterRead: isEdit || params.surface.scope === 'selection' || params.surface.scope === 'project',
     allowFullProjectModuleRead: false,
     enforceToolBudgets,
     requiresBatching,
