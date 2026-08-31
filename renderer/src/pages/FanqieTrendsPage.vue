@@ -15,6 +15,7 @@ import {
   parseZonghengBoardCatalog,
   type ZonghengBoardMeta
 } from '@/features/ranking/zonghengRanking'
+import { createSerialSaveQueue } from '@/features/ranking/rankingScanPersistence'
 
 const appStore = useAppStore()
 const message = useMessage()
@@ -148,6 +149,10 @@ const scanBusy = computed(() => scanLoading.value || scanStage.value === 'ideati
 const scanCatalogLoading = ref(false)
 const qimaoBoards = ref<QimaoBoardMeta[]>([])
 const zonghengBoards = ref<ZonghengBoardMeta[]>([])
+const enqueueRankingScanSave = createSerialSaveQueue((payload: RankingScanHistoryRecord) =>
+  window.characterArc.saveRankingScanHistory(payload)
+)
+let rankingScanHistoryLoadRequest = 0
 
 function openBookUrl(url: unknown): void {
   const target = typeof url === 'string' ? url.trim() : ''
@@ -885,7 +890,7 @@ function persistScanHistory(status?: RankingScanStatus): void {
   // 先在渲染进程转成纯 JSON 数据，同时避免历史保存失败打断当前扫榜任务。
   try {
     const payload = toIpcPayload(record)
-    void window.characterArc.saveRankingScanHistory(payload).catch(() => {
+    void enqueueRankingScanSave(payload).catch(() => {
       // 历史记录属于辅助持久化，失败时不影响当前分析流程。
     })
   } catch {
@@ -894,15 +899,25 @@ function persistScanHistory(status?: RankingScanStatus): void {
 }
 
 async function loadRankingScanHistory(): Promise<void> {
+  const requestId = ++rankingScanHistoryLoadRequest
+  const projectId = appStore.selectedProjectId || ''
   try {
-    const result = await window.characterArc.listRankingScanHistory(appStore.selectedProjectId || '')
+    const result = await window.characterArc.listRankingScanHistory(projectId)
     if (!result.success || !Array.isArray(result.result)) return
-    scanHistory.value = result.result
+    if (requestId !== rankingScanHistoryLoadRequest || projectId !== (appStore.selectedProjectId || '')) return
+    const loaded = result.result
       .map(normalizeRankingScanRecord)
       .filter((record): record is RankingScanHistoryRecord => Boolean(record))
-      .map((record) => record.status === 'running'
+      .map((record): RankingScanHistoryRecord => record.status === 'running'
         ? { ...record, status: 'failed', error: record.error || '应用关闭时任务未完成，请重新运行' }
         : record)
+    const activeRecord = scanActiveId.value
+      ? scanHistory.value.find((record) => record.id === scanActiveId.value)
+      : null
+    scanHistory.value = activeRecord
+      ? [activeRecord, ...loaded.filter((record) => record.id !== activeRecord.id)]
+      : loaded
+    scanHistory.value.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   } catch {
     // 历史读取失败不阻断当前榜单和新任务流程。
   }

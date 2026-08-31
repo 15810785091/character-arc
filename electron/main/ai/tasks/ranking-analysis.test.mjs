@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { createSerialSaveQueue } from '../../../../renderer/src/features/ranking/rankingScanPersistence.ts'
 
 const rootDir = fileURLToPath(new URL('../../../../', import.meta.url))
 
@@ -44,4 +45,18 @@ test('脑洞任务要求四个方向、每个三个组合，并在前端手动�
   assert.match(pageSource, /我的收藏/)
   assert.match(pageSource, /character-arc:ranking-idea-favorites/)
   assert.match(pageSource, /appStore\.openWizard\(\{ title: idea\.title, genre: idea\.genre, premise \}\)/)
+})
+
+test('扫榜历史保存按调用顺序落库，避免旧快照覆盖新状态', async () => {
+  const saved = []
+  const enqueueSave = createSerialSaveQueue(async (payload) => {
+    await new Promise((resolve) => setTimeout(resolve, payload.delay))
+    saved.push(payload.status)
+  })
+
+  const first = enqueueSave({ status: 'running', delay: 20 })
+  const second = enqueueSave({ status: 'success', delay: 1 })
+  await Promise.all([first, second])
+
+  assert.deepEqual(saved, ['running', 'success'])
 })
