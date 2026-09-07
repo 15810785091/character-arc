@@ -2804,6 +2804,8 @@ export const useAppStore = defineStore('app', () => {
     appSettings.value.apiKey = profile.apiKey
     appSettings.value.baseUrl = profile.baseUrl
     appSettings.value.apiProtocol = profile.apiProtocol ?? 'auto'
+    appSettings.value.codexCliPath = profile.codexCliPath ?? ''
+    appSettings.value.codexReasoningEffort = profile.codexReasoningEffort ?? 'default'
     appSettings.value.temperature = profile.temperature
     appSettings.value.topP = profile.topP
     appSettings.value.presencePenalty = profile.presencePenalty
@@ -2839,6 +2841,8 @@ export const useAppStore = defineStore('app', () => {
       if (updates.apiKey !== undefined) appSettings.value.apiKey = updates.apiKey
       if (updates.baseUrl !== undefined) appSettings.value.baseUrl = updates.baseUrl
       if (updates.apiProtocol !== undefined) appSettings.value.apiProtocol = updates.apiProtocol
+      if (updates.codexCliPath !== undefined) appSettings.value.codexCliPath = updates.codexCliPath
+      if (updates.codexReasoningEffort !== undefined) appSettings.value.codexReasoningEffort = updates.codexReasoningEffort
       if ('temperature' in updates) appSettings.value.temperature = updates.temperature
       if ('topP' in updates) appSettings.value.topP = updates.topP
       if ('presencePenalty' in updates) appSettings.value.presencePenalty = updates.presencePenalty

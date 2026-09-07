@@ -35,6 +35,7 @@ import {
 
 import { useAppStore } from '@/stores/app'
 import { createDefaultWorkflowDocuments } from '@/features/novelWorkflow/documents'
+import { isCodexCliProvider } from '@shared/ai-provider-catalog'
 import type {
   CharacterCard,
   CharacterRelationship,
@@ -192,6 +193,7 @@ const totalCharacterCount = computed(() => chapters.value.reduce((sum, chapter) 
 const volumeCount = computed(() => new Set(chapters.value.map((chapter) => chapter.volumeTitle.trim() || '正文')).size)
 const hasAiSettings = computed(() => {
   const settings = appStore.appSettings
+  if (isCodexCliProvider(settings.provider)) return Boolean(settings.model)
   const isLocal = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(settings.baseUrl.trim())
   return Boolean(settings.model && settings.baseUrl && (settings.apiKey || settings.provider === 'ollama' || isLocal))
 })

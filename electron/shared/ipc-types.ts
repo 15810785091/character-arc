@@ -16,12 +16,14 @@ export interface AppSettingsPayload {
   apiKey: string
   baseUrl: string
   apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+  codexCliPath?: string
+  codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   proxyUrl: string
   temperature?: number
   topP?: number
   presencePenalty?: number
   frequencyPenalty?: number
-  aiProfiles: Array<{ id: string; name: string; provider: string; baseUrl: string; apiKey: string; model: string; apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'; temperature?: number; topP?: number; presencePenalty?: number; frequencyPenalty?: number }>
+  aiProfiles: Array<{ id: string; name: string; provider: string; baseUrl: string; apiKey: string; model: string; apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'; codexCliPath?: string; codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'; temperature?: number; topP?: number; presencePenalty?: number; frequencyPenalty?: number }>
   activeAiProfileId: string
   imageProvider: string
   imageModel: string

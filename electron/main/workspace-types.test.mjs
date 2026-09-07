@@ -110,6 +110,31 @@ test('旧 AI 设置和配置档案缺少协议时迁移为 auto', () => {
   assert.equal(merged.appSettings.aiProfiles[0].apiProtocol, 'auto')
 })
 
+test('Codex CLI 路径和推理强度随配置档案持久化', () => {
+  const normalized = normalizeAppSettings({
+    provider: 'codex-cli',
+    model: 'default',
+    codexCliPath: ' /opt/homebrew/bin/codex ',
+    codexReasoningEffort: 'high',
+    activeAiProfileId: 'profile-codex',
+    aiProfiles: [{
+      id: 'profile-codex',
+      name: 'Codex CLI',
+      provider: 'codex-cli',
+      baseUrl: '',
+      apiKey: '',
+      model: 'default',
+      codexCliPath: ' /opt/homebrew/bin/codex ',
+      codexReasoningEffort: 'xhigh'
+    }]
+  })
+
+  assert.equal(normalized.codexCliPath, '/opt/homebrew/bin/codex')
+  assert.equal(normalized.codexReasoningEffort, 'high')
+  assert.equal(normalized.aiProfiles[0].codexCliPath, '/opt/homebrew/bin/codex')
+  assert.equal(normalized.aiProfiles[0].codexReasoningEffort, 'xhigh')
+})
+
 test('工作台菜单顺序按应用设置保存并清理重复值', () => {
   const normalized = normalizeWorkspacePayload({
     theme: 'ocean',

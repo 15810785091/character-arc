@@ -30,6 +30,10 @@ export type AppSettings = {
   baseUrl: string
   /** API 线协议；auto 时按供应商和模型目录解析 */
   apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+  /** Codex CLI 可执行文件或其所在目录；留空时从 PATH 和常见目录查找 */
+  codexCliPath?: string
+  /** Codex CLI 的 model_reasoning_effort；default 时沿用 Codex 配置 */
+  codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   /** 可选：AI 请求使用的 HTTP/HTTPS 代理地址 */
   proxyUrl?: string
   /** 可选：模型采样温度，留空时使用服务端默认值 */

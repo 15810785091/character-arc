@@ -3,9 +3,11 @@ import { normalizeSettings } from '../settings'
 import { createProxyFetch } from '../proxy-fetch'
 import {
   isAnthropicProtocol,
+  isCodexCliProvider,
   isOpenCodeProvider,
   isSupportedProviderModel
 } from '@shared/ai-provider-catalog'
+import { fetchCodexCliModels } from '../codex-cli'
 
 /** 从模型列表接口获取到的模型信息 */
 export interface FetchedModel {
@@ -137,6 +139,9 @@ async function fetchModelsAnthropic(baseUrl: string, apiKey: string, requestFetc
  */
 export async function fetchModels(settings: AppSettings): Promise<FetchedModel[]> {
   const normalized = normalizeSettings(settings)
+  if (isCodexCliProvider(normalized.provider)) {
+    return fetchCodexCliModels(normalized)
+  }
   if (!normalized.baseUrl.trim()) throw new Error('请先填写 Base URL。')
   if (!normalized.apiKey.trim() && normalized.provider !== 'ollama') {
     throw new Error('需要 API Key 才能获取模型列表。')

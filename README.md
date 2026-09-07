@@ -65,7 +65,7 @@ CharacterArc（弧光）不是"只会对话的 AI 壳子"，而是一套围绕�
   <tr>
     <td colspan="2" valign="top">
       <h4>🌐 多厂商接入</h4>
-      <p>支持所有 OpenAI 兼容接口（DeepSeek、通义千问、智谱、Kimi、SiliconFlow、Ollama 等）和 Anthropic 协议（官方及中转站），只需选协议填地址即可。</p>
+      <p>支持 Codex CLI、OpenAI 兼容接口（DeepSeek、通义千问、智谱、Kimi、SiliconFlow、Ollama 等）和 Anthropic 协议（官方及中转站）。</p>
     </td>
   </tr>
 </table>
@@ -184,7 +184,7 @@ CharacterArc（弧光）不是"只会对话的 AI 壳子"，而是一套围绕�
 | 富文本编辑 | TipTap |
 | 持久化 | SQLite（主进程） |
 | 关系图谱 | Cytoscape |
-| AI SDK | Vercel AI SDK (@ai-sdk/openai, @ai-sdk/anthropic) |
+| AI 接入 | Vercel AI SDK（OpenAI / Anthropic）+ 本机 Codex CLI |
 | 文档解析 | mammoth (.docx)、marked (Markdown) |
 
 ## 📋 环境要求
@@ -234,6 +234,7 @@ macOS 产物为 ad-hoc 签名、未公证的 `.dmg` / `.zip`，适合内部安�
       <b>📝 文本生成</b>
       <ul>
         <li>支持维护多套接口配置，并在标题栏快速切换</li>
+        <li>Codex CLI：复用本机登录状态，无需 API Key；支持自动查找路径、拉取模型和设置推理强度</li>
         <li>协议类型：OpenAI 兼容协议 / Anthropic 协议</li>
         <li>Base URL（只需填域名或路径前缀，系统自动补全 /v1）</li>
         <li>API Key</li>

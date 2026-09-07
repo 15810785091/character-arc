@@ -318,6 +318,8 @@ export type WorkspacePayload = {
     apiKey: string
     baseUrl: string
     apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+    codexCliPath?: string
+    codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     proxyUrl: string
     temperature?: number
     topP?: number
@@ -331,6 +333,8 @@ export type WorkspacePayload = {
       apiKey: string
       model: string
       apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+      codexCliPath?: string
+      codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
       temperature?: number
       topP?: number
       presencePenalty?: number
@@ -477,6 +481,15 @@ function normalizeApiProtocol(
     : 'auto'
 }
 
+function normalizeCodexReasoningEffort(
+  value: unknown
+): 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' {
+  return typeof value === 'string'
+    && ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(value)
+    ? value as 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+    : 'default'
+}
+
 export function normalizeAppSettings(
   settings?: Partial<WorkspacePayload['appSettings']> | null
 ): WorkspacePayload['appSettings'] {
@@ -507,6 +520,8 @@ export function normalizeAppSettings(
     apiKey: settings?.apiKey || '',
     baseUrl: settings?.baseUrl || '',
     apiProtocol: normalizeApiProtocol(settings?.apiProtocol),
+    codexCliPath: typeof settings?.codexCliPath === 'string' ? settings.codexCliPath.trim() : '',
+    codexReasoningEffort: normalizeCodexReasoningEffort(settings?.codexReasoningEffort),
     proxyUrl: settings?.proxyUrl || '',
     temperature,
     topP,
@@ -523,6 +538,8 @@ export function normalizeAppSettings(
             apiKey: String(item.apiKey ?? '').trim(),
             model: String(item.model ?? '').trim(),
             apiProtocol: normalizeApiProtocol(item.apiProtocol),
+            codexCliPath: typeof item.codexCliPath === 'string' ? item.codexCliPath.trim() : '',
+            codexReasoningEffort: normalizeCodexReasoningEffort(item.codexReasoningEffort),
             temperature:
               typeof item.temperature === 'number' && Number.isFinite(item.temperature)
                 ? Math.min(2, Math.max(0, item.temperature))
