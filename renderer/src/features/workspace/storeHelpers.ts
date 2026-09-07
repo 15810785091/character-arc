@@ -397,25 +397,25 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
     activeAiProfileId = migratedId
   }
 
-  if (activeAiProfileId && !aiProfiles.find(p => p.id === activeAiProfileId)) {
+  if (!aiProfiles.find(p => p.id === activeAiProfileId)) {
     activeAiProfileId = aiProfiles[0]?.id ?? ''
   }
 
   const activeProfile = aiProfiles.find(p => p.id === activeAiProfileId)
 
   return {
-    provider,
-    model,
-    apiKey,
-    baseUrl,
-    apiProtocol,
+    provider: activeProfile?.provider ?? provider,
+    model: activeProfile?.model ?? model,
+    apiKey: activeProfile?.apiKey ?? apiKey,
+    baseUrl: activeProfile?.baseUrl ?? baseUrl,
+    apiProtocol: activeProfile?.apiProtocol ?? apiProtocol,
     codexCliPath: activeProfile?.codexCliPath ?? codexCliPath,
     codexReasoningEffort: activeProfile?.codexReasoningEffort ?? codexReasoningEffort,
     proxyUrl: sanitizeSettingString(source.proxyUrl, defaultAppSettings.proxyUrl),
-    temperature,
-    topP,
-    presencePenalty,
-    frequencyPenalty,
+    temperature: activeProfile?.temperature ?? temperature,
+    topP: activeProfile?.topP ?? topP,
+    presencePenalty: activeProfile?.presencePenalty ?? presencePenalty,
+    frequencyPenalty: activeProfile?.frequencyPenalty ?? frequencyPenalty,
     aiProfiles,
     activeAiProfileId,
     imageProvider: sanitizeSettingString(source.imageProvider, defaultAppSettings.imageProvider),

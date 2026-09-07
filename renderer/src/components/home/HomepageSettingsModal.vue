@@ -356,6 +356,9 @@ function handleAddProfile(): void {
   }
   draftSettings.aiProfiles.push(newProfile)
   editingProfileId.value = id
+  if (!draftSettings.activeAiProfileId) {
+    draftSettings.activeAiProfileId = id
+  }
   fetchedModels.value = []
 }
 

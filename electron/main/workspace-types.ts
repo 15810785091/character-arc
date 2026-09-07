@@ -514,52 +514,63 @@ export function normalizeAppSettings(
       ? Math.min(2, Math.max(-2, settings.frequencyPenalty))
       : undefined
 
+  const aiProfiles = Array.isArray(settings?.aiProfiles)
+    ? settings.aiProfiles
+        .filter((item): item is NonNullable<typeof settings.aiProfiles>[number] => !!item && typeof item === 'object')
+        .map((item) => ({
+          id: String(item.id ?? '').trim(),
+          name: String(item.name ?? '').trim(),
+          provider: String(item.provider ?? '').trim(),
+          baseUrl: String(item.baseUrl ?? '').trim(),
+          apiKey: String(item.apiKey ?? '').trim(),
+          model: String(item.model ?? '').trim(),
+          apiProtocol: normalizeApiProtocol(item.apiProtocol),
+          codexCliPath: typeof item.codexCliPath === 'string' ? item.codexCliPath.trim() : '',
+          codexReasoningEffort: normalizeCodexReasoningEffort(item.codexReasoningEffort),
+          temperature:
+            typeof item.temperature === 'number' && Number.isFinite(item.temperature)
+              ? Math.min(2, Math.max(0, item.temperature))
+              : undefined,
+          topP:
+            typeof item.topP === 'number' && Number.isFinite(item.topP)
+              ? Math.min(1, Math.max(0, item.topP))
+              : undefined,
+          presencePenalty:
+            typeof item.presencePenalty === 'number' && Number.isFinite(item.presencePenalty)
+              ? Math.min(2, Math.max(-2, item.presencePenalty))
+              : undefined,
+          frequencyPenalty:
+            typeof item.frequencyPenalty === 'number' && Number.isFinite(item.frequencyPenalty)
+              ? Math.min(2, Math.max(-2, item.frequencyPenalty))
+              : undefined
+        }))
+        .filter((item) => item.id)
+    : []
+  const requestedActiveProfileId = typeof settings?.activeAiProfileId === 'string'
+    ? settings.activeAiProfileId.trim()
+    : ''
+  const activeAiProfileId = aiProfiles.some((item) => item.id === requestedActiveProfileId)
+    ? requestedActiveProfileId
+    : aiProfiles[0]?.id ?? ''
+  const activeProfile = aiProfiles.find((item) => item.id === activeAiProfileId)
+
   return {
-    provider: settings?.provider || 'openai-compatible',
-    model: settings?.model || '',
-    apiKey: settings?.apiKey || '',
-    baseUrl: settings?.baseUrl || '',
-    apiProtocol: normalizeApiProtocol(settings?.apiProtocol),
-    codexCliPath: typeof settings?.codexCliPath === 'string' ? settings.codexCliPath.trim() : '',
-    codexReasoningEffort: normalizeCodexReasoningEffort(settings?.codexReasoningEffort),
+    provider: activeProfile?.provider || settings?.provider || 'openai-compatible',
+    model: activeProfile?.model ?? settings?.model ?? '',
+    apiKey: activeProfile?.apiKey ?? settings?.apiKey ?? '',
+    baseUrl: activeProfile?.baseUrl ?? settings?.baseUrl ?? '',
+    apiProtocol: activeProfile?.apiProtocol ?? normalizeApiProtocol(settings?.apiProtocol),
+    codexCliPath: activeProfile?.codexCliPath
+      ?? (typeof settings?.codexCliPath === 'string' ? settings.codexCliPath.trim() : ''),
+    codexReasoningEffort: activeProfile?.codexReasoningEffort
+      ?? normalizeCodexReasoningEffort(settings?.codexReasoningEffort),
     proxyUrl: settings?.proxyUrl || '',
-    temperature,
-    topP,
-    presencePenalty,
-    frequencyPenalty,
-    aiProfiles: Array.isArray(settings?.aiProfiles)
-      ? settings.aiProfiles
-          .filter((item): item is NonNullable<typeof settings.aiProfiles>[number] => !!item && typeof item === 'object')
-          .map((item) => ({
-            id: String(item.id ?? '').trim(),
-            name: String(item.name ?? '').trim(),
-            provider: String(item.provider ?? '').trim(),
-            baseUrl: String(item.baseUrl ?? '').trim(),
-            apiKey: String(item.apiKey ?? '').trim(),
-            model: String(item.model ?? '').trim(),
-            apiProtocol: normalizeApiProtocol(item.apiProtocol),
-            codexCliPath: typeof item.codexCliPath === 'string' ? item.codexCliPath.trim() : '',
-            codexReasoningEffort: normalizeCodexReasoningEffort(item.codexReasoningEffort),
-            temperature:
-              typeof item.temperature === 'number' && Number.isFinite(item.temperature)
-                ? Math.min(2, Math.max(0, item.temperature))
-                : undefined,
-            topP:
-              typeof item.topP === 'number' && Number.isFinite(item.topP)
-                ? Math.min(1, Math.max(0, item.topP))
-                : undefined,
-            presencePenalty:
-              typeof item.presencePenalty === 'number' && Number.isFinite(item.presencePenalty)
-                ? Math.min(2, Math.max(-2, item.presencePenalty))
-                : undefined,
-            frequencyPenalty:
-              typeof item.frequencyPenalty === 'number' && Number.isFinite(item.frequencyPenalty)
-                ? Math.min(2, Math.max(-2, item.frequencyPenalty))
-                : undefined
-          }))
-          .filter((item) => item.id)
-      : [],
-    activeAiProfileId: typeof settings?.activeAiProfileId === 'string' ? settings.activeAiProfileId : '',
+    temperature: activeProfile?.temperature ?? temperature,
+    topP: activeProfile?.topP ?? topP,
+    presencePenalty: activeProfile?.presencePenalty ?? presencePenalty,
+    frequencyPenalty: activeProfile?.frequencyPenalty ?? frequencyPenalty,
+    aiProfiles,
+    activeAiProfileId,
     imageProvider: settings?.imageProvider || '',
     imageModel: settings?.imageModel || '',
     imageApiKey: settings?.imageApiKey || '',

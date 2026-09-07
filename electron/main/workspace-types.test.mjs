@@ -130,9 +130,35 @@ test('Codex CLI 路径和推理强度随配置档案持久化', () => {
   })
 
   assert.equal(normalized.codexCliPath, '/opt/homebrew/bin/codex')
-  assert.equal(normalized.codexReasoningEffort, 'high')
+  assert.equal(normalized.codexReasoningEffort, 'xhigh')
   assert.equal(normalized.aiProfiles[0].codexCliPath, '/opt/homebrew/bin/codex')
   assert.equal(normalized.aiProfiles[0].codexReasoningEffort, 'xhigh')
+})
+
+test('活动配置缺失时自动激活首个档案并同步运行模型', () => {
+  const normalized = normalizeAppSettings({
+    provider: 'openai-compatible',
+    model: '',
+    apiKey: '',
+    baseUrl: '',
+    activeAiProfileId: '',
+    aiProfiles: [{
+      id: 'profile-codex',
+      name: '我的Codex',
+      provider: 'codex-cli',
+      baseUrl: '',
+      apiKey: '',
+      model: 'gpt-5.6-luna',
+      codexCliPath: '/opt/homebrew/bin/codex',
+      codexReasoningEffort: 'high'
+    }]
+  })
+
+  assert.equal(normalized.activeAiProfileId, 'profile-codex')
+  assert.equal(normalized.provider, 'codex-cli')
+  assert.equal(normalized.model, 'gpt-5.6-luna')
+  assert.equal(normalized.codexCliPath, '/opt/homebrew/bin/codex')
+  assert.equal(normalized.codexReasoningEffort, 'high')
 })
 
 test('工作台菜单顺序按应用设置保存并清理重复值', () => {
