@@ -6,7 +6,7 @@ import { stripReasoningMarkup } from '../reasoning'
 import { isAiStreamIdleTimeoutError } from '../sse'
 import { resolveSamplingOptions } from '../request-options'
 import { isCodexCliProvider } from '@shared/ai-provider-catalog'
-import { runCodexCli } from '../codex-cli'
+import { runCodexToolAgent } from './codex-tool-bridge'
 
 export type RunAgentParams = {
   settings: AppSettings
@@ -97,24 +97,7 @@ function mergeUsage(a: AiRunUsage | undefined, b: AiRunUsage | undefined): AiRun
 export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> {
   const maxSteps = params.maxSteps ?? 8
   if (isCodexCliProvider(params.settings.provider)) {
-    params.handlers.onAgentStatus('正在通过 Codex CLI 思考...', 1, 1)
-    const result = await runCodexCli(
-      params.settings,
-      {
-        system: [
-          params.systemPrompt,
-          '当前通过 Codex CLI 文本模式运行，CharacterArc 的进程内工具不可用。请直接根据已提供的上下文回答，不要尝试调用工具。'
-        ].join('\n\n'),
-        user: params.userPrompt
-      },
-      { signal: params.ctx.signal, handlers: params.handlers }
-    )
-    return {
-      finalText: stripReasoningMarkup(result.text),
-      toolCalls: [],
-      iterations: 1,
-      usage: result.usage
-    }
+    return await runCodexToolAgent({ ...params, maxSteps })
   }
   const toolCalls: ToolCallTrace[] = []
   const toolStartTimes = new Map<string, number>()
