@@ -4,6 +4,24 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.19.0] - 2026-09-08
+
+### Added
+
+- **本机 Codex CLI**：可以直接调用电脑上已经登录的 Codex 来完成 AI 任务，不需要另外填写 API Key；应用支持自动查找 Codex、获取可用模型，并可选择推理强度
+
+### Changed
+
+- **AI 配置档案**：首次保存配置时会自动启用第一个配置档；新增、切换配置后，当前模型和配置参数会同步到实际运行环境
+- **Codex CLI 配置**：支持在设置中填写 Codex 可执行文件或所在目录，留空时会自动查找；应用配置的代理也会传递给 Codex CLI
+
+### Fixed
+
+- **章节全文读取**：项目级全局助手分析指定章节时可以读取完整正文，不再被强制限制为摘要或预览
+- **番茄 AI 扫榜历史**：将历史保存请求按顺序写入，并忽略已经过期的读取结果，避免新记录被旧快照覆盖或当前记录消失
+
+[1.19.0]: https://github.com/zhouyeshan/character-arc/releases/tag/v1.19.0
+
 ## [1.18.5] - 2026-08-24
 
 ### Added
