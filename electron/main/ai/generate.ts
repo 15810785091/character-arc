@@ -5,8 +5,9 @@ import { buildSystemPrompt, createModel, providerSupportsNativeStructuredOutput 
 import type { AiRunUsage, AppSettings, AiStreamHandlers, PromptPair } from './shared-types'
 import { stripReasoningMarkup } from './reasoning'
 import { isOpenAIReasoningChatModel, resolveProviderOptions, resolveSamplingOptions } from './request-options'
-import { isAnthropicProtocol, isOpenAIChatProtocol } from '@shared/ai-provider-catalog'
+import { isAnthropicProtocol, isCodexCliProvider, isOpenAIChatProtocol } from '@shared/ai-provider-catalog'
 import { AiStreamProtocolError } from './sse'
+import { runCodexCli } from './codex-cli'
 
 function useStreamFallback(settings: AppSettings): boolean {
   return isAnthropicProtocol(settings.provider, settings.model)
@@ -82,6 +83,9 @@ export async function aiGenerateTextWithUsage(
   signal?: AbortSignal,
   options?: AiGenerateOptions
 ): Promise<AiTextGenerationResult> {
+  if (isCodexCliProvider(settings.provider)) {
+    return runCodexCli(settings, prompt, { signal })
+  }
   const system = buildSystemPrompt(settings, prompt.system)
   const canUseNativeStructuredOutput = providerSupportsNativeStructuredOutput(settings)
   const providerOptions = resolveProviderOptions(settings, options)
@@ -195,6 +199,9 @@ export async function aiStreamTextWithUsage(
   signal: AbortSignal,
   maxTokens?: number
 ): Promise<AiTextGenerationResult> {
+  if (isCodexCliProvider(settings.provider)) {
+    return runCodexCli(settings, prompt, { signal, handlers })
+  }
   const providerOptions = resolveProviderOptions(settings, { preferLowReasoning: true })
   const samplingOptions = resolveSamplingOptions(settings)
   let streamError: unknown = null

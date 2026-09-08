@@ -236,6 +236,8 @@ export const defaultAppSettings: AppSettings = {
   apiKey: '',
   baseUrl: 'https://api.deepseek.com/v1',
   apiProtocol: 'auto',
+  codexCliPath: '',
+  codexReasoningEffort: 'default',
   proxyUrl: '',
   aiProfiles: [],
   activeAiProfileId: '',
@@ -348,6 +350,12 @@ function normalizeAiProfile(profile: AiProfile): AiProfile {
       || profile.apiProtocol === 'anthropic'
         ? profile.apiProtocol
         : 'auto',
+    codexCliPath: String(profile.codexCliPath ?? '').trim(),
+    codexReasoningEffort:
+      typeof profile.codexReasoningEffort === 'string'
+      && ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(profile.codexReasoningEffort)
+        ? profile.codexReasoningEffort
+        : 'default',
     temperature: normalizeOptionalNumber(profile.temperature, 0, 2),
     topP: normalizeOptionalNumber(profile.topP, 0, 1),
     presencePenalty: normalizeOptionalNumber(profile.presencePenalty, -2, 2),
@@ -371,6 +379,12 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
   const topP = normalizeOptionalNumber(source.topP, 0, 1)
   const presencePenalty = normalizeOptionalNumber(source.presencePenalty, -2, 2)
   const frequencyPenalty = normalizeOptionalNumber(source.frequencyPenalty, -2, 2)
+  const codexCliPath = sanitizeSettingString(source.codexCliPath, '')
+  const codexReasoningEffort =
+    typeof source.codexReasoningEffort === 'string'
+    && ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(source.codexReasoningEffort)
+      ? source.codexReasoningEffort
+      : 'default'
 
   let aiProfiles = Array.isArray(source.aiProfiles)
     ? source.aiProfiles.map(normalizeAiProfile).filter((profile) => profile.id)
@@ -379,25 +393,29 @@ export function normalizeAppSettings(settings?: Partial<AppSettings> | null): Ap
 
   if (aiProfiles.length === 0 && (apiKey || model !== defaultAppSettings.model)) {
     const migratedId = `profile-${Date.now()}`
-    aiProfiles = [{ id: migratedId, name: provider || 'Default', provider, baseUrl, apiKey, model, apiProtocol, temperature, topP, presencePenalty, frequencyPenalty }]
+    aiProfiles = [{ id: migratedId, name: provider || 'Default', provider, baseUrl, apiKey, model, apiProtocol, codexCliPath, codexReasoningEffort, temperature, topP, presencePenalty, frequencyPenalty }]
     activeAiProfileId = migratedId
   }
 
-  if (activeAiProfileId && !aiProfiles.find(p => p.id === activeAiProfileId)) {
+  if (!aiProfiles.find(p => p.id === activeAiProfileId)) {
     activeAiProfileId = aiProfiles[0]?.id ?? ''
   }
 
+  const activeProfile = aiProfiles.find(p => p.id === activeAiProfileId)
+
   return {
-    provider,
-    model,
-    apiKey,
-    baseUrl,
-    apiProtocol,
+    provider: activeProfile?.provider ?? provider,
+    model: activeProfile?.model ?? model,
+    apiKey: activeProfile?.apiKey ?? apiKey,
+    baseUrl: activeProfile?.baseUrl ?? baseUrl,
+    apiProtocol: activeProfile?.apiProtocol ?? apiProtocol,
+    codexCliPath: activeProfile?.codexCliPath ?? codexCliPath,
+    codexReasoningEffort: activeProfile?.codexReasoningEffort ?? codexReasoningEffort,
     proxyUrl: sanitizeSettingString(source.proxyUrl, defaultAppSettings.proxyUrl),
-    temperature,
-    topP,
-    presencePenalty,
-    frequencyPenalty,
+    temperature: activeProfile?.temperature ?? temperature,
+    topP: activeProfile?.topP ?? topP,
+    presencePenalty: activeProfile?.presencePenalty ?? presencePenalty,
+    frequencyPenalty: activeProfile?.frequencyPenalty ?? frequencyPenalty,
     aiProfiles,
     activeAiProfileId,
     imageProvider: sanitizeSettingString(source.imageProvider, defaultAppSettings.imageProvider),

@@ -33,6 +33,7 @@ import { formatAiErrorMessage } from '../error-message'
 import {
   isOpenCodeProvider,
   isOpenAIChatProtocol,
+  isCodexCliProvider,
   resolveAiProviderProtocol
 } from '@shared/ai-provider-catalog'
 import { createHash, randomUUID } from 'node:crypto'
@@ -43,6 +44,7 @@ import {
   finishChapterProcessing,
   type ChapterProcessingStageStatus
 } from './chapter-processing-store'
+import { testCodexCliConnection } from '../codex-cli'
 
 const postGenerationTasks = new BackgroundTaskCoordinator()
 
@@ -88,7 +90,10 @@ export async function runAiTask(
   // 白名单内的任务直接尝试走 agent loop，不预判 provider 能力。
   // 如果模型不支持 tool_use，运行时会抛错，在 catch 中降级或提示用户。
   const settingsForRouting = normalizeSettings(task.settings)
+  // Codex CLI 自己运行在独立进程中，无法直接执行 CharacterArc 的进程内 tools；
+  // 此模式仍使用相同的完整任务 Prompt，并走单次/流式文本链路。
   const usesAgentRoute = AGENT_TASK_WHITELIST.has(task.task)
+    && !isCodexCliProvider(settingsForRouting.provider)
   if (usesAgentRoute) {
     await enrichTaskContextForGeneration(task, settingsForRouting)
     try {
@@ -420,6 +425,14 @@ export async function testAiConnection(rawSettings: AppSettings): Promise<{
 }> {
   const settings = normalizeSettings(rawSettings)
   validateSettings(settings)
+  if (isCodexCliProvider(settings.provider)) {
+    await testCodexCliConnection(settings)
+    return {
+      provider: settings.provider,
+      model: settings.model,
+      protocol: 'codex-cli'
+    }
+  }
   const probePrompt = {
     system: 'You are a connectivity probe. Reply briefly to confirm the request succeeded.',
     user: 'Reply with CONNECTED.'

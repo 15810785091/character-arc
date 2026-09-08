@@ -18,7 +18,7 @@ import { useAppStore } from '@/stores/app'
 import { darkModePresets, themePresets } from '@/theme/presets'
 import { toIpcPayload } from '@/utils/ipcPayload'
 import type { AiProfile, AppSettings, DarkModeStyle, ThemeName } from '@/types/app'
-import { isOpenAIChatProtocol, resolveAiProviderProtocol } from '@shared/ai-provider-catalog'
+import { isCodexCliProvider, isOpenAIChatProtocol, resolveAiProviderProtocol } from '@shared/ai-provider-catalog'
 
 const props = defineProps<{
   show: boolean
@@ -53,6 +53,16 @@ const apiProtocolOptions = [
   { label: 'Anthropic Messages', value: 'anthropic' },
   { label: 'OpenAI Chat Completions', value: 'openai-chat' }
 ]
+const codexReasoningEffortOptions = [
+  { label: '默认（沿用 Codex 配置）', value: 'default' },
+  { label: 'Minimal', value: 'minimal' },
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'High', value: 'high' },
+  { label: 'XHigh', value: 'xhigh' },
+  { label: 'Max', value: 'max' },
+  { label: 'Ultra', value: 'ultra' }
+]
 
 const draftSettings = reactive<AppSettings>({
   provider: '',
@@ -60,6 +70,8 @@ const draftSettings = reactive<AppSettings>({
   apiKey: '',
   baseUrl: '',
   apiProtocol: 'auto',
+  codexCliPath: '',
+  codexReasoningEffort: 'default',
   proxyUrl: '',
   temperature: undefined,
   topP: undefined,
@@ -132,6 +144,7 @@ function handleScroll(): void {
 }
 
 const activeProviderPreset = computed(() => getProviderPreset(editingProfile.value?.provider ?? draftSettings.provider))
+const isCodexCli = computed(() => isCodexCliProvider(editingProfile.value?.provider ?? draftSettings.provider))
 const activeApiProtocol = computed(() => resolveAiProviderProtocol(
   editingProfile.value?.provider ?? draftSettings.provider,
   editingProfile.value?.model ?? draftSettings.model,
@@ -152,6 +165,12 @@ const modelSelectOptions = computed(() =>
 const imageModelSelectOptions = computed(() =>
   fetchedImageModels.value.map((m) => ({ label: m.id, value: m.id }))
 )
+const canFetchModels = computed(() => {
+  const profile = editingProfile.value
+  if (!profile || isFetchingModels.value) return false
+  if (isCodexCliProvider(profile.provider)) return true
+  return Boolean(profile.baseUrl.trim() && (profile.provider === 'ollama' || profile.apiKey.trim()))
+})
 const hasPendingChanges = computed(() =>
   draftTheme.value !== appStore.theme
   || JSON.stringify(draftSettings.aiProfiles) !== JSON.stringify(appStore.appSettings.aiProfiles)
@@ -175,6 +194,8 @@ function syncDraftFromStore(): void {
   draftSettings.apiKey = appStore.appSettings.apiKey
   draftSettings.baseUrl = appStore.appSettings.baseUrl
   draftSettings.apiProtocol = appStore.appSettings.apiProtocol ?? 'auto'
+  draftSettings.codexCliPath = appStore.appSettings.codexCliPath
+  draftSettings.codexReasoningEffort = appStore.appSettings.codexReasoningEffort
   draftSettings.proxyUrl = appStore.appSettings.proxyUrl
   proxyTestIp.value = ''
   draftSettings.temperature = appStore.appSettings.temperature
@@ -326,6 +347,8 @@ function handleAddProfile(): void {
     apiKey: '',
     model: defaults.model,
     apiProtocol: 'auto',
+    codexCliPath: '',
+    codexReasoningEffort: 'default',
     temperature: undefined,
     topP: undefined,
     presencePenalty: undefined,
@@ -333,6 +356,9 @@ function handleAddProfile(): void {
   }
   draftSettings.aiProfiles.push(newProfile)
   editingProfileId.value = id
+  if (!draftSettings.activeAiProfileId) {
+    draftSettings.activeAiProfileId = id
+  }
   fetchedModels.value = []
 }
 
@@ -348,6 +374,8 @@ function handleCopyProfile(): void {
     apiKey: source.apiKey,
     model: source.model,
     apiProtocol: source.apiProtocol ?? 'auto',
+    codexCliPath: source.codexCliPath ?? '',
+    codexReasoningEffort: source.codexReasoningEffort ?? 'default',
     temperature: source.temperature,
     topP: source.topP,
     presencePenalty: source.presencePenalty,
@@ -384,6 +412,8 @@ function updateEditingProfile(updates: Partial<AiProfile>): void {
     if (updates.apiKey !== undefined) draftSettings.apiKey = updates.apiKey
     if (updates.baseUrl !== undefined) draftSettings.baseUrl = updates.baseUrl
     if (updates.apiProtocol !== undefined) draftSettings.apiProtocol = updates.apiProtocol
+    if (updates.codexCliPath !== undefined) draftSettings.codexCliPath = updates.codexCliPath
+    if (updates.codexReasoningEffort !== undefined) draftSettings.codexReasoningEffort = updates.codexReasoningEffort
     if ('temperature' in updates) draftSettings.temperature = updates.temperature
     if ('topP' in updates) draftSettings.topP = updates.topP
     if ('presencePenalty' in updates) draftSettings.presencePenalty = updates.presencePenalty
@@ -440,6 +470,8 @@ function buildProfilePayload(): AppSettings {
     apiKey: profile.apiKey,
     baseUrl: profile.baseUrl,
     apiProtocol: profile.apiProtocol ?? 'auto',
+    codexCliPath: profile.codexCliPath ?? '',
+    codexReasoningEffort: profile.codexReasoningEffort ?? 'default',
     temperature: profile.temperature,
     topP: profile.topP,
     presencePenalty: profile.presencePenalty,
@@ -497,6 +529,8 @@ async function saveSettings(): Promise<void> {
     apiKey: activeProfile?.apiKey ?? draftSettings.apiKey,
     baseUrl: activeProfile?.baseUrl ?? draftSettings.baseUrl,
     apiProtocol: activeProfile?.apiProtocol ?? draftSettings.apiProtocol ?? 'auto',
+    codexCliPath: activeProfile?.codexCliPath ?? draftSettings.codexCliPath,
+    codexReasoningEffort: activeProfile?.codexReasoningEffort ?? draftSettings.codexReasoningEffort,
     temperature: activeProfile?.temperature ?? draftSettings.temperature,
     topP: activeProfile?.topP ?? draftSettings.topP,
     presencePenalty: activeProfile?.presencePenalty ?? draftSettings.presencePenalty,
@@ -602,7 +636,7 @@ async function saveSettings(): Promise<void> {
                   @update:value="(value) => handleProviderChange(value ?? 'openai-compatible')"
                 />
               </n-form-item>
-              <n-form-item label="API Key">
+              <n-form-item v-if="!isCodexCli" label="API Key">
                 <n-input
                   type="password"
                   show-password-on="click"
@@ -612,6 +646,16 @@ async function saveSettings(): Promise<void> {
                 />
               </n-form-item>
             </div>
+            <n-form-item v-if="isCodexCli" label="Codex CLI 路径">
+              <div class="preset-field">
+                <n-input
+                  :value="editingProfile.codexCliPath ?? ''"
+                  placeholder="留空自动查找，或填写 codex 可执行文件/所在目录"
+                  @update:value="(value) => updateEditingProfile({ codexCliPath: value })"
+                />
+                <span class="preset-hint">请先在终端执行 codex login；应用代理会自动传给 Codex CLI。</span>
+              </div>
+            </n-form-item>
             <n-form-item v-if="activeProviderPreset.customBaseUrl" label="Base URL">
               <n-input
                 :value="editingProfile.baseUrl"
@@ -634,14 +678,14 @@ async function saveSettings(): Promise<void> {
                   <n-input
                     v-else
                     :value="editingProfile.model"
-                    placeholder="填写 Key 后可点右侧按钮拉取或手动输入"
+                    :placeholder="isCodexCli ? '默认使用 Codex 配置，或拉取/输入模型名称' : '填写 Key 后可点右侧按钮拉取或手动输入'"
                     @update:value="(value) => updateEditingProfile({ model: value })"
                   />
                   <n-button
                     quaternary
                     class="model-fetch-btn"
                     title="获取模型列表"
-                    :disabled="isFetchingModels || !editingProfile.baseUrl.trim() || (editingProfile.provider !== 'ollama' && !editingProfile.apiKey.trim())"
+                    :disabled="!canFetchModels"
                     @click="handleFetchModels"
                   >
                     <template #icon>
@@ -655,7 +699,14 @@ async function saveSettings(): Promise<void> {
             <div class="provider-hint-block">
               <p>{{ activeProviderPreset.hint }}</p>
             </div>
-            <details class="advanced-settings">
+            <n-form-item v-if="isCodexCli" label="推理强度">
+              <n-select
+                :options="codexReasoningEffortOptions"
+                :value="editingProfile.codexReasoningEffort ?? 'default'"
+                @update:value="(value) => updateEditingProfile({ codexReasoningEffort: value ?? 'default' })"
+              />
+            </n-form-item>
+            <details v-else class="advanced-settings">
               <summary>API 高级设置</summary>
               <div class="advanced-settings-body">
                 <n-form-item label="API 协议">

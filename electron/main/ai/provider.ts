@@ -1,6 +1,6 @@
 import type { LanguageModel } from 'ai'
 import type { AppSettings } from './shared-types'
-import { isAnthropicProtocol, resolveAiProviderProtocol } from '@shared/ai-provider-catalog'
+import { isAnthropicProtocol, isCodexCliProvider, resolveAiProviderProtocol } from '@shared/ai-provider-catalog'
 import { createProxyFetch } from './proxy-fetch'
 import { createProviderTransportFetch } from './sse'
 import { createProtocolModel } from './protocol-adapter'
@@ -15,6 +15,7 @@ function isOfficialOpenAIProvider(settings: AppSettings): boolean {
 }
 
 export function providerSupportsNativeStructuredOutput(settings: AppSettings): boolean {
+  if (isCodexCliProvider(settings.provider)) return false
   // Anthropic's SDK object streaming can produce an empty text stream or fail
   // object parsing for otherwise recoverable JSON tasks. Keep Claude JSON tasks
   // on the text path and let task normalizers/repair prompts handle the JSON.
@@ -26,6 +27,9 @@ export function createModel(
   settings: AppSettings,
   options?: { requestFetch?: typeof fetch }
 ): LanguageModel {
+  if (isCodexCliProvider(settings.provider)) {
+    throw new Error('Codex CLI 由本机子进程传输层调用，不能创建 HTTP 模型。')
+  }
   const requestFetch = options?.requestFetch ?? createProxyFetch(settings.proxyUrl)
   const customFetch = createProviderTransportFetch(requestFetch)
   return createProtocolModel({

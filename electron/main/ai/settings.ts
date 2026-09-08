@@ -3,7 +3,8 @@ import {
   getAiProviderCatalogEntry,
   normalizeAiProtocolPreference,
   normalizeAiBaseUrl,
-  normalizeAiProviderName
+  normalizeAiProviderName,
+  isCodexCliProvider
 } from '@shared/ai-provider-catalog'
 
 /**
@@ -25,6 +26,13 @@ function normalizeOptionalNumber(value: unknown, min: number, max: number): numb
   return Math.min(max, Math.max(min, value))
 }
 
+function normalizeCodexReasoningEffort(value: unknown): AppSettings['codexReasoningEffort'] {
+  return typeof value === 'string'
+    && ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(value)
+    ? value as AppSettings['codexReasoningEffort']
+    : 'default'
+}
+
 /**
  * 规范化用户设置：trim、转小写、缺失字段回退到供应商默认值。
  *
@@ -42,6 +50,8 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     apiKey: settings.apiKey?.trim() || '',
     baseUrl,
     apiProtocol: normalizeAiProtocolPreference(settings.apiProtocol),
+    codexCliPath: settings.codexCliPath?.trim() || '',
+    codexReasoningEffort: normalizeCodexReasoningEffort(settings.codexReasoningEffort),
     proxyUrl: settings.proxyUrl?.trim() || '',
     temperature: normalizeOptionalNumber(settings.temperature, 0, 2),
     topP: normalizeOptionalNumber(settings.topP, 0, 1),
@@ -74,7 +84,7 @@ export function isLocalBaseUrl(baseUrl: string): boolean {
  * @returns 是否需要填写 API Key
  */
 export function requiresApiKey(settings: AppSettings): boolean {
-  if (settings.provider === 'ollama') {
+  if (settings.provider === 'ollama' || isCodexCliProvider(settings.provider)) {
     return false
   }
   return !isLocalBaseUrl(settings.baseUrl)
@@ -90,7 +100,7 @@ export function validateSettings(settings: AppSettings): void {
   if (!settings.model.trim()) {
     throw new Error('请先填写模型名称。')
   }
-  if (!settings.baseUrl.trim()) {
+  if (!isCodexCliProvider(settings.provider) && !settings.baseUrl.trim()) {
     throw new Error('请先填写 Base URL。')
   }
   if (requiresApiKey(settings) && !settings.apiKey.trim()) {

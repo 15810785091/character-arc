@@ -875,6 +875,8 @@ export interface AiProfile {
   apiKey: string
   model: string
   apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+  codexCliPath?: string
+  codexReasoningEffort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   temperature?: number
   topP?: number
   presencePenalty?: number
@@ -894,6 +896,10 @@ export interface AppSettings {
   baseUrl: string
   /** API 线协议；auto 时按供应商和模型目录解析 */
   apiProtocol?: 'auto' | 'openai-responses' | 'openai-chat' | 'anthropic'
+  /** Codex CLI 可执行文件或所在目录 */
+  codexCliPath: string
+  /** Codex CLI 推理强度 */
+  codexReasoningEffort: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   /** AI 网络请求使用的 HTTP/HTTPS 代理地址 */
   proxyUrl: string
   /** 可选：模型采样温度，留空时使用服务端默认值 */
