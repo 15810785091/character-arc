@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
-import { AlignLeft, Check, ChevronDown, ChevronRight, Folder, FocusIcon, History, Maximize2, Menu, MessageSquareQuote, Minus, Minimize2, Plus, RefreshCw, ShieldAlert, Sparkles, Type, Wand2 } from 'lucide-vue-next'
-import { NAlert, NDropdown, NTag, NTooltip, useMessage } from 'naive-ui'
+import { AlignLeft, BookOpen, Check, ChevronDown, ChevronRight, Folder, FocusIcon, History, Maximize2, Menu, MessageSquareQuote, Minus, Minimize2, MoreHorizontal, Plus, RefreshCw, ShieldAlert, Sparkles, Type, Wand2 } from 'lucide-vue-next'
+import { NAlert, NDropdown, NTag, useMessage } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import SimpleChapterEditor from './SimpleChapterEditor.vue'
 import type { ChapterRecoverySnapshot } from './SimpleChapterEditor.vue'
 import ChapterVersionDialog from './ChapterVersionDialog.vue'
 import EditorFindBar from './EditorFindBar.vue'
 import EditorContextMenu from './EditorContextMenu.vue'
+import ChapterReferencePanel from './ChapterReferencePanel.vue'
 import { getChapterCharacterCount } from '@/features/chapters/editorContent'
 import { editorFontOptions, getEditorFontOption, isEditorFont } from '@/features/chapters/editorTypography'
 import { formatChapterWordTargetLabel, parseChapterWordTarget } from '@/features/chapters/wordTarget'
@@ -17,12 +18,14 @@ import { useAppStore } from '@/stores/app'
 defineProps<{
   aiOpen: boolean
   focusMode: boolean
+  referenceOpen: boolean
   showSidebarToggle?: boolean
 }>()
 
 const emit = defineEmits<{
   toggleAi: []
   toggleFocus: []
+  toggleReference: []
   toggleSidebar: []
   selectionAction: [action: string, text: string]
   generateDraft: []
@@ -76,6 +79,37 @@ function stepFont(delta: number): void {
 }
 
 const currentChapter = computed(() => appStore.selectedChapter)
+
+const toolbarMoreOptions = computed<DropdownOption[]>(() => [
+  {
+    key: 'format',
+    label: '一键排版',
+    icon: () => h(AlignLeft, { size: 14 }),
+    disabled: !currentChapter.value
+  },
+  {
+    key: 'focus',
+    label: '专注模式 (F11)',
+    icon: () => h(FocusIcon, { size: 14 })
+  },
+  {
+    key: 'history',
+    label: '历史版本',
+    icon: () => h(History, { size: 14 }),
+    disabled: !currentChapter.value
+  }
+])
+
+function selectToolbarMoreAction(key: string | number): void {
+  if (key === 'format') {
+    formatCurrentChapter()
+  } else if (key === 'focus') {
+    emit('toggleFocus')
+  } else if (key === 'history') {
+    versionDialogVisible.value = true
+  }
+}
+
 const currentVolume = computed(() => appStore.selectedChapterVolume)
 const currentVolumeIndex = computed(() =>
   appStore.outlineVolumes.findIndex((v) => v.id === currentVolume.value?.id)
@@ -393,40 +427,52 @@ onBeforeUnmount(() => {
           <button @click="stepFont(1)"><Plus :size="11" /></button>
         </div>
 
-        <button
-          class="toolbtn"
-          :disabled="!currentChapter"
-          title="整理段落：首行缩进 2 字，段间空 1 行"
-          @click="formatCurrentChapter"
-        >
-          <AlignLeft :size="13" />
-          <span>一键排版</span>
-        </button>
-
-        <n-tooltip placement="bottom">
-          <template #trigger>
-            <button class="toolbtn" @click="emit('toggleFocus')"><FocusIcon :size="13" /></button>
-          </template>
-          专注模式 (F11)
-        </n-tooltip>
-        <n-tooltip placement="bottom">
-          <template #trigger>
-            <button class="toolbtn" :disabled="!currentChapter" @click="versionDialogVisible = true">
-              <History :size="13" />
-            </button>
-          </template>
-          历史版本
-        </n-tooltip>
-        <button class="toolbtn" :disabled="!currentChapter" @click="emit('generateDraft')">
+        <button class="toolbtn draft-action" :disabled="!currentChapter" @click="emit('generateDraft')">
           <Wand2 :size="13" />
           <span>生成初稿</span>
         </button>
-        <button class="toolbtn" :class="{ primary: !aiOpen, active: aiOpen }" @click="emit('toggleAi')">
+
+        <button
+          class="toolbtn reference-tool"
+          :class="{ active: referenceOpen }"
+          :disabled="!currentChapter"
+          title="查看本章关联的世界观、人物和组织设定"
+          @click="emit('toggleReference')"
+        >
+          <BookOpen :size="13" />
+          <span>设定参考</span>
+        </button>
+
+        <n-dropdown
+          trigger="click"
+          placement="bottom-end"
+          :options="toolbarMoreOptions"
+          @select="selectToolbarMoreAction"
+        >
+          <button class="toolbtn more-tool" title="更多章节工具">
+            <MoreHorizontal :size="15" />
+            <span>更多</span>
+          </button>
+        </n-dropdown>
+
+        <button class="toolbtn ai-action" :class="{ primary: !aiOpen, active: aiOpen }" @click="emit('toggleAi')">
           <Sparkles :size="13" />
           <span>AI 助理</span>
         </button>
       </div>
     </header>
+
+    <button
+      v-if="focusMode"
+      type="button"
+      class="focus-reference-toggle"
+      :class="{ active: referenceOpen }"
+      :aria-label="referenceOpen ? '关闭设定参考' : '打开设定参考'"
+      :title="referenceOpen ? '关闭设定参考' : '设定参考'"
+      @click="emit('toggleReference')"
+    >
+      <BookOpen :size="15" />
+    </button>
 
     <div ref="scrollRef" class="ep-scroll arc-scrollbar" @contextmenu="handleEditorContextMenu">
       <div class="ep-canvas" :style="{ fontSize: fontSize + 'px' }">
@@ -496,6 +542,8 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </div>
+
+    <ChapterReferencePanel v-if="referenceOpen" @close="emit('toggleReference')" />
 
     <EditorFindBar
       ref="findBarRef"
@@ -725,6 +773,18 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.more-tool {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.ai-action {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  box-shadow: -8px 0 10px var(--arc-bg-surface);
+}
+
 .font-picker-label {
   min-width: 24px;
   text-align: center;
@@ -805,6 +865,57 @@ onBeforeUnmount(() => {
 .toolbtn.active:hover {
   background: var(--arc-primary-hover);
   color: white;
+}
+
+@media (max-width: 900px) {
+  .ep-header {
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .save-indicator,
+  .divider {
+    display: none;
+  }
+
+  .ep-actions {
+    gap: 2px;
+  }
+
+  .font-picker-tool {
+    min-width: 34px;
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
+  .font-picker-label {
+    display: none;
+  }
+}
+
+.focus-reference-toggle {
+  position: absolute;
+  top: 16px;
+  right: 132px;
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--arc-border);
+  border-radius: 6px;
+  background: var(--arc-bg-surface);
+  color: var(--arc-text-secondary);
+  cursor: pointer;
+  box-shadow: var(--arc-shadow-sm);
+}
+
+.focus-reference-toggle:hover,
+.focus-reference-toggle.active {
+  border-color: var(--arc-primary);
+  background: var(--arc-primary-soft);
+  color: var(--arc-primary);
 }
 
 .ep-scroll {

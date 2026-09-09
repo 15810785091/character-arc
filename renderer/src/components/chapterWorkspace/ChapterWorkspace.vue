@@ -36,6 +36,7 @@ const MAX_AI_WIDTH = 600
 
 const aiOpen = ref(true)
 const focusMode = ref(false)
+const referenceOpen = ref(false)
 const sidebarDrawerVisible = ref(false)
 const viewportWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const aiPanelWidth = ref(DEFAULT_AI_WIDTH)
@@ -70,6 +71,11 @@ function toggleAi(): void {
 
 function toggleFocus(): void {
   focusMode.value = !focusMode.value
+}
+
+function toggleReference(): void {
+  referenceOpen.value = !referenceOpen.value
+  localStorage.setItem('arc-chapter-reference-open', String(referenceOpen.value))
 }
 
 function toggleSidebar(): void {
@@ -143,6 +149,11 @@ function handleKeydown(event: KeyboardEvent): void {
     toggleFocus()
     return
   }
+  if (event.key === 'Escape' && referenceOpen.value) {
+    referenceOpen.value = false
+    localStorage.setItem('arc-chapter-reference-open', 'false')
+    return
+  }
   if (event.key === 'Escape' && focusMode.value) {
     toggleFocus()
   }
@@ -158,6 +169,7 @@ onMounted(() => {
       aiPanelWidth.value = val
     }
   }
+  referenceOpen.value = localStorage.getItem('arc-chapter-reference-open') === 'true'
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
@@ -176,9 +188,11 @@ onBeforeUnmount(() => {
       class="ws-editor"
       :ai-open="aiOpen"
       :focus-mode="focusMode"
+      :reference-open="referenceOpen"
       :show-sidebar-toggle="!focusMode && isCompact"
       @toggle-ai="toggleAi"
       @toggle-focus="toggleFocus"
+      @toggle-reference="toggleReference"
       @toggle-sidebar="toggleSidebar"
       @selection-action="handleSelectionAction"
       @generate-draft="handleGenerateDraft"
