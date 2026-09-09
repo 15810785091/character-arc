@@ -4,7 +4,8 @@ import test from 'node:test'
 import {
   insertInHtml,
   joinChapterBlocks,
-  replaceInHtml
+  replaceInHtml,
+  replaceAllInHtml
 } from './chapter-html-edit.ts'
 
 test('段内替换不会生成嵌套 p 或额外空段落', () => {
@@ -31,4 +32,11 @@ test('锚点插入保持合法段落结构', () => {
 
 test('空编辑器追加正文时替换占位空段落', () => {
   assert.equal(joinChapterBlocks('<p></p>', '<p>正文</p>', 'end'), '<p>正文</p>')
+})
+
+test('整章替换不需要定位原文，并重新生成合法段落', () => {
+  assert.equal(
+    replaceAllInHtml('<p>旧正文</p>', '新正文第一段\n\n新正文第二段'),
+    '<p>新正文第一段</p><p>新正文第二段</p>'
+  )
 })

@@ -87,6 +87,34 @@ test('章节面板禁止暂存当前章节之外的修改', async () => {
   assert.equal(stagedStore.list({}, 'session-1').length, 0)
 })
 
+test('整章重写使用 replace_all，无需提供 search', async () => {
+  const { tool, stagedStore } = makeTool({ currentChapterId: 'chapter-1' })
+  const operationSchema = tool.definition.inputSchema.properties.operation
+
+  assert.ok(operationSchema.enum.includes('replace_all'))
+  const result = await runTool(tool, {
+    operation: 'replace_all',
+    content: '整章新正文',
+    reason: '按拆章方案重写本章'
+  })
+
+  assert.equal(result.isError, undefined)
+  assert.equal(stagedStore.list({}, 'session-1').length, 1)
+})
+
+test('局部 replace 缺少 search 时仍拒绝，避免误覆盖整章', async () => {
+  const { tool, stagedStore } = makeTool({ currentChapterId: 'chapter-1' })
+  const result = await runTool(tool, {
+    operation: 'replace',
+    content: '不能被当成整章正文',
+    reason: '参数遗漏测试'
+  })
+
+  assert.equal(result.isError, true)
+  assert.equal(result.content, 'replace 需要提供 search。')
+  assert.equal(stagedStore.list({}, 'session-1').length, 0)
+})
+
 test('同一轮多次暂存会基于上一条暂存后的章节正文继续计算', async () => {
   const { tool, stagedStore, calls } = makeTool({ currentChapterId: 'chapter-1' })
 

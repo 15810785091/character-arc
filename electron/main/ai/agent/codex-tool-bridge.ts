@@ -60,11 +60,48 @@ function mergeUsage(a: AiRunUsage | undefined, b: AiRunUsage | undefined): AiRun
   }
 }
 
+/** 从混合文本中提取彼此相邻的顶层 JSON 对象，正确跳过字符串里的花括号。 */
+function extractTopLevelJsonObjects(text: string): string[] {
+  const objects: string[] = []
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (char === '"' && depth > 0) {
+      inString = true
+    } else if (char === '{') {
+      if (depth === 0) start = index
+      depth += 1
+    } else if (char === '}' && depth > 0) {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1))
+        start = -1
+      }
+    }
+  }
+  return objects
+}
+
 function jsonCandidates(text: string): string[] {
   const trimmed = stripReasoningMarkup(text).trim()
   const candidates = [trimmed]
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim()
   if (fenced) candidates.push(fenced)
+  candidates.push(...extractTopLevelJsonObjects(trimmed))
   const firstBrace = trimmed.indexOf('{')
   const lastBrace = trimmed.lastIndexOf('}')
   if (firstBrace >= 0 && lastBrace > firstBrace) {
@@ -75,6 +112,7 @@ function jsonCandidates(text: string): string[] {
 
 /** 解析 Codex 返回的宿主工具协议；普通聊天文本返回 null，由调用方直接展示。 */
 export function parseCodexToolEnvelope(text: string): CodexToolEnvelope | null {
+  let latest: CodexToolEnvelope | null = null
   for (const candidate of jsonCandidates(text)) {
     let value: unknown
     try {
@@ -99,9 +137,9 @@ export function parseCodexToolEnvelope(text: string): CodexToolEnvelope | null {
       }
       toolCalls.push({ name, arguments: rawCall.arguments })
     }
-    if (valid) return { toolCalls, finalText: value.finalText.trim() }
+    if (valid) latest = { toolCalls, finalText: value.finalText.trim() }
   }
-  return null
+  return latest
 }
 
 function buildToolProtocolPrompt(tools: Tool[]): string {

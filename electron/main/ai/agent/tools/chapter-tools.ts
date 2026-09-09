@@ -174,8 +174,8 @@ export function createChapterTools(callbacks: ChapterToolCallbacks): Tool[] {
         properties: {
           operation: {
             type: 'string',
-            enum: ['replace', 'insert', 'append'],
-            description: 'Edit operation.'
+            enum: ['replace', 'replace_all', 'insert', 'append'],
+            description: 'replace performs a local search-based replacement; replace_all explicitly replaces the whole chapter; insert/append add content.'
           },
           chapter_id: {
             type: 'string',
@@ -217,7 +217,7 @@ export function createChapterTools(callbacks: ChapterToolCallbacks): Tool[] {
         return { content: error instanceof Error ? error.message : String(error), isError: true }
       }
 
-      const operation = String(input.operation) as 'replace' | 'insert' | 'append'
+      const operation = String(input.operation) as 'replace' | 'replace_all' | 'insert' | 'append'
       const content = String(input.content || '')
       const search = input.search ? String(input.search) : undefined
       const position = input.position ? String(input.position) as 'before' | 'after' | 'start' | 'end' : undefined
