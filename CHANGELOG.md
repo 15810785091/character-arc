@@ -4,6 +4,23 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.19.2] - 2026-09-09
+
+### Added
+
+- **章节正文整章替换**：章节助手和 Codex CLI 支持直接重写整章正文，明确要求整体替换时不必先提供原文定位片段；普通局部替换仍需要指定目标内容，减少误覆盖风险
+
+### Changed
+
+- **助手工具说明**：将工具执行过程改成更容易理解的中文，例如“读取章节内容”“暂存章节替换提案”，并补充资料类型和操作名称
+- **助手对话定位**：重新打开助手、切换页面或恢复已隐藏的对话后，自动回到最新消息位置，查看结果更方便
+
+### Fixed
+
+- **Codex CLI 工具协议解析**：修复 Codex 重复或连续返回多段结果时无法正确识别工具调用的问题，现在会采用最后一条有效结果继续处理
+
+[1.19.2]: https://github.com/zhouyeshan/character-arc/releases/tag/v1.19.2
+
 ## [1.19.1] - 2026-09-08
 
 ### Added
