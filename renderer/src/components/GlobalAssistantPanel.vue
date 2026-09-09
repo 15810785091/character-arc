@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ChevronRight,
   GripHorizontal,
@@ -170,6 +170,10 @@ function scrollToBottom(smooth = true): void {
   })
 }
 
+function restoreConversationPosition(): void {
+  nextTick(() => scrollToBottom(false))
+}
+
 function closePanel(): void {
   emit('close')
 }
@@ -203,6 +207,9 @@ onMounted(() => {
   }
   window.addEventListener('resize', syncInputHeightBounds)
 })
+
+onMounted(restoreConversationPosition)
+onActivated(restoreConversationPosition)
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncInputHeightBounds)

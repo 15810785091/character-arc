@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ArrowDown, Brain, Check, ChevronDown as ChevronDownIcon, Copy, Edit3, Replace, RotateCw, Sparkles, Undo2, Wand2 } from 'lucide-vue-next'
 import { useMessage } from 'naive-ui'
 import { marked } from 'marked'
@@ -97,6 +97,14 @@ function scrollToBottom(smooth = true): void {
   })
 }
 
+function restoreConversationPosition(): void {
+  isAtBottom.value = true
+  nextTick(() => {
+    scrollToBottom(false)
+    checkScrollPosition()
+  })
+}
+
 watch(
   () => [props.messages.length, lastMsg.value?.content, lastMsg.value?.reasoning, lastMsg.value?.toolCalls?.length, lastMsg.value?.editEvents?.length] as const,
   () => {
@@ -156,6 +164,9 @@ onMounted(() => {
   scrollRef.value?.addEventListener('scroll', checkScrollPosition)
   scrollRef.value?.addEventListener('click', handleCodeCopy)
 })
+
+onMounted(restoreConversationPosition)
+onActivated(restoreConversationPosition)
 
 onBeforeUnmount(() => {
   scrollRef.value?.removeEventListener('scroll', checkScrollPosition)
