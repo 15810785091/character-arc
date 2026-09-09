@@ -103,6 +103,11 @@ export function replaceInHtml(html: string, search: string, replacement: string)
   return html.slice(0, htmlStart) + textToInlineHtml(replacement) + html.slice(htmlEnd)
 }
 
+/** 整章替换：显式操作才会调用，不依赖原文定位，输出标准段落 HTML。 */
+export function replaceAllInHtml(_html: string, replacement: string): string {
+  return textToHtmlParagraphs(replacement)
+}
+
 export function insertInHtml(
   html: string,
   search: string,

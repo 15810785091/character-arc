@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useMessage } from 'naive-ui'
@@ -149,6 +149,14 @@ async function scrollToBottom(): Promise<void> {
   if (el) el.scrollTop = el.scrollHeight
 }
 
+function restoreConversationPosition(): void {
+  shouldFollowOutput.value = true
+  void scrollToBottom()
+}
+
+onMounted(restoreConversationPosition)
+onActivated(restoreConversationPosition)
+
 watch(
   () => props.messages.length,
   (length, previousLength) => {
@@ -177,39 +185,106 @@ watch(
   }
 )
 
+const projectDataLabels: Record<string, string> = {
+  worldview: '世界观',
+  characters: '人物设定',
+  organizations: '势力与组织',
+  organization_memberships: '组织成员归属',
+  relationships: '人物关系',
+  outline: '剧情大纲',
+  chapters: '章节资料',
+  plot_threads: '剧情线索',
+  plotThreads: '剧情线索',
+  inspiration: '灵感素材',
+  knowledge: '项目知识库',
+  available_deconstructions: '可用的拆书参考',
+  deconstruction_library: '拆书知识库',
+  reference_works: '已选参考书',
+  workflow_documents: '创作记忆',
+  workflowDocuments: '创作记忆',
+  project_constraints: '项目约束',
+  projectConstraints: '项目约束',
+  style: '写作风格'
+}
+
+const workflowDocumentLabels: Record<string, string> = {
+  task_plan: '创作计划',
+  findings: '灵感与发现',
+  progress: '写作进度',
+  current_status: '项目概况',
+  novel_setting: '世界与设定',
+  character_relationships: '人物关系',
+  pending_hooks: '伏笔悬念',
+  resource_ledger: '素材清单'
+}
+
+const actionLabels: Record<string, string> = {
+  create: '新增',
+  update: '修改',
+  delete: '删除',
+  replace: '替换',
+  replace_all: '替换全文',
+  append: '追加',
+  insert: '插入',
+  restore: '恢复'
+}
+
+function projectDataLabel(value: unknown): string {
+  const key = String(value ?? '').trim()
+  return projectDataLabels[key] ?? (key || '项目资料')
+}
+
+function workflowDocumentLabel(value: unknown): string {
+  const key = String(value ?? '').trim()
+  return workflowDocumentLabels[key] ?? (key || '创作记忆')
+}
+
+function actionLabel(value: unknown, fallback = '修改'): string {
+  const key = String(value ?? '').trim()
+  return actionLabels[key] ?? (key || fallback)
+}
+
 /** 人类可读的工具动作说明。 */
 function describeToolAction(t: AssistantToolCallView): string {
   const a = t.args
   switch (t.toolName) {
-    case 'read_chapter': return `读取章节 ${short(a.chapter_id ?? '当前章节')}`
+    case 'read_chapter': return a.chapter_id ? '读取指定章节内容' : '读取当前章节内容'
     case 'list_chapters': return '列出所有章节'
-    case 'search_project': return `全项目搜索: "${short(a.query ?? a.q)}"`
-    case 'read_project_data':
-      return `读取${short(a.entity_type ?? '项目数据')}${a.entity_id ? ' · ' + short(a.entity_id) : ''}`
+    case 'search_project': return `全项目搜索：“${short(a.query ?? a.q)}”`
+    case 'read_project_data': {
+      const dataLabel = projectDataLabel(a.entity_type)
+      if (a.doc_key) return `读取${dataLabel}：${workflowDocumentLabel(a.doc_key)}`
+      if (a.entity_id) return `精读${dataLabel}中的指定条目`
+      if (a.summary_only === true) return `读取${dataLabel}摘要`
+      return `读取${dataLabel}`
+    }
     case 'stage_chapter_edit':
-      return `暂存章节修改（${short(a.operation ?? 'edit')} · ${short(a.chapter_id ?? '当前章节')}）`
-    case 'stage_chapter_delete':
-      return `暂存删除章节（${short(a.chapter_id ?? '当前章节')}）`
-    case 'stage_chapter_update': return `暂存章节资料修改（${short(a.chapter_id ?? '当前章节')}）`
-    case 'list_chapter_versions': return `查看章节版本（${short(a.chapter_id ?? '当前章节')}）`
-    case 'stage_chapter_restore': return `暂存章节版本恢复（${short(a.version_id)}）`
-    case 'stage_relationship': return `暂存人物关系（${short(a.action ?? 'update')}）`
-    case 'stage_organization_membership': return `暂存组织归属（${short(a.action ?? 'update')}）`
-    case 'stage_inspiration': return `暂存灵感（${short(a.action ?? 'update')}）`
+      return `暂存章节${actionLabel(a.operation)}提案`
+    case 'stage_chapter_create': return `暂存新章节：${short(a.title ?? '未命名章节')}`
+    case 'stage_chapter_delete': return '暂存删除指定章节'
+    case 'stage_chapter_update': return '暂存章节资料修改'
+    case 'list_chapter_versions': return '查看章节历史版本'
+    case 'stage_chapter_restore': return '暂存恢复章节版本'
+    case 'stage_relationship': return `暂存人物关系（${actionLabel(a.action)}）`
+    case 'stage_organization_membership': return `暂存组织归属（${actionLabel(a.action)}）`
+    case 'stage_inspiration': return `暂存灵感（${actionLabel(a.action)}）`
     case 'list_outline_volumes': return '列出所有分卷'
-    case 'stage_outline_volume': return `暂存分卷（${short(a.action ?? 'update')}）`
-    case 'stage_knowledge_document': return `暂存知识文档（${short(a.action ?? 'update')}）`
+    case 'stage_outline_volume': return `暂存分卷（${actionLabel(a.action)}）`
+    case 'stage_knowledge_document': return `暂存知识文档（${actionLabel(a.action)}）`
     case 'stage_project_metadata': return '暂存项目资料修改'
-    case 'stage_worldview': return `暂存世界观（${short(a.action ?? 'update')}）`
-    case 'stage_character': return `暂存人物卡（${short(a.action ?? 'update')}）`
-    case 'stage_organization': return `暂存组织（${short(a.action ?? 'update')}）`
-    case 'stage_outline': return `暂存大纲节点（${short(a.action ?? 'update')}）`
-    case 'stage_constraint': return `暂存项目约束（${short(a.action ?? 'create')}）`
-    case 'stage_plot_thread': return `暂存剧情线索（${short(a.action ?? 'update')}）`
-    case 'stage_workflow_document': return `暂存创作记忆（${short(a.doc_key ?? '')}${a.operation ? ' · ' + short(a.operation) : ''}）`
+    case 'stage_worldview': return `暂存世界观（${actionLabel(a.action)}）`
+    case 'stage_character': return `暂存人物卡（${actionLabel(a.action)}）`
+    case 'stage_organization': return `暂存组织（${actionLabel(a.action)}）`
+    case 'stage_outline': return `暂存大纲节点（${actionLabel(a.action)}）`
+    case 'stage_constraint': return `暂存项目约束（${actionLabel(a.action, '新增')}）`
+    case 'stage_plot_thread': return `暂存剧情线索（${actionLabel(a.action)}）`
+    case 'stage_workflow_document': return `暂存创作记忆（${workflowDocumentLabel(a.doc_key)}${a.operation ? ' · ' + actionLabel(a.operation) : ''}）`
     case 'skill_list': return '查看可用技能'
-    case 'skill_load': return `加载技能: ${short(a.id ?? a.name)}`
-    case 'knowledge_save_document': return `保存知识文档: ${short(a.title)}`
+    case 'skill_load': return '加载写作技能'
+    case 'skill_read_reference': return '读取写作技能参考资料'
+    case 'skill_glob': return '浏览写作技能文件'
+    case 'skill_run_script': return '执行写作技能分析'
+    case 'knowledge_save_document': return `保存知识文档：${short(a.title)}`
     default: return t.toolName
   }
 }
@@ -239,8 +314,14 @@ function isEvidenceTool(name: string): boolean {
 
 function evidenceLabel(t: AssistantToolCallView): string {
   if (t.toolName === 'search_project') return `搜索：${short(t.args.query ?? t.args.q, 28)}`
-  if (t.toolName === 'read_project_data') return `读取资料：${short(t.args.entity_type ?? '项目索引', 28)}`
-  if (t.toolName === 'read_chapter') return `读取章节：${short(t.args.chapter_id ?? '当前章节', 28)}`
+  if (t.toolName === 'read_project_data') {
+    const dataLabel = projectDataLabel(t.args.entity_type ?? '项目索引')
+    if (t.args.doc_key) return `读取资料：${dataLabel} · ${workflowDocumentLabel(t.args.doc_key)}`
+    if (t.args.entity_id) return `精读资料：${dataLabel}中的指定条目`
+    if (t.args.summary_only === true) return `读取资料：${dataLabel}摘要`
+    return `读取资料：${dataLabel}`
+  }
+  if (t.toolName === 'read_chapter') return t.args.chapter_id ? '读取章节：指定章节' : '读取章节：当前章节'
   if (t.toolName === 'list_chapters') return '章节列表'
   return t.toolName
 }

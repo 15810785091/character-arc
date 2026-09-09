@@ -57,7 +57,9 @@ test('Codex CLI 可通过宿主工具生成暂存变更，重复调用不会重�
     `  const text = !bridgeEnabled`,
     `    ? JSON.stringify({ toolCalls: [], finalText: '宿主工具桥未启用。' })`,
     `    : prompt.includes('change_id=change-1') ? ${JSON.stringify(finalResponse)} : ${JSON.stringify(toolResponse)}`,
-    `  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } }))`,
+    `  const event = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } })`,
+    `  console.log(event)`,
+    `  console.log(event)`,
     `  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 8 } }))`,
     '})'
   ].join('\n')
@@ -121,4 +123,21 @@ test('Codex 宿主工具协议兼容 JSON 代码块，普通聊天文本不会�
   )
   assert.equal(parseCodexToolEnvelope('这是普通聊天回复。'), null)
   assert.equal(parseCodexToolEnvelope('{"title":"用户要求的 JSON 内容"}'), null)
+})
+
+test('Codex CLI 重复返回相同协议 JSON 时仍能解析工具调用', () => {
+  const response = '{"toolCalls":[{"name":"read_chapter","arguments":{"chapter_id":"chapter-1"}}],"finalText":""}'
+  assert.deepEqual(parseCodexToolEnvelope(response + response), {
+    toolCalls: [{ name: 'read_chapter', arguments: { chapter_id: 'chapter-1' } }],
+    finalText: ''
+  })
+})
+
+test('Codex CLI 连续返回多个有效协议 JSON 时采用最后一个结果', () => {
+  const first = '{"toolCalls":[{"name":"read_chapter","arguments":{"chapter_id":"chapter-1"}}],"finalText":""}'
+  const latest = '{"toolCalls":[{"name":"read_chapter","arguments":{"chapter_id":"chapter-2"}}],"finalText":""}'
+  assert.deepEqual(parseCodexToolEnvelope(first + latest), {
+    toolCalls: [{ name: 'read_chapter', arguments: { chapter_id: 'chapter-2' } }],
+    finalText: ''
+  })
 })

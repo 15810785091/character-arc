@@ -4,6 +4,7 @@ import { commitChapterEditInDb } from './chapter-commit'
 import {
   insertInHtml,
   joinChapterBlocks,
+  replaceAllInHtml,
   replaceInHtml,
   stripHtmlTags,
   textToHtmlParagraphs
@@ -32,7 +33,7 @@ export type ChapterSummaryItem = {
 }
 
 export type ChapterEdit = {
-  operation: 'replace' | 'insert' | 'append'
+  operation: 'replace' | 'replace_all' | 'insert' | 'append'
   search?: string
   content: string
   position?: 'before' | 'after' | 'start' | 'end'
@@ -226,6 +227,9 @@ export async function applyChapterEdit(
     }
     newContent = replaceInHtml(oldContent, searchText, edit.content)
     preview = `Replaced "${searchText.slice(0, 30)}..." -> "${edit.content.slice(0, 30)}..."`
+  } else if (edit.operation === 'replace_all') {
+    newContent = replaceAllInHtml(oldContent, edit.content)
+    preview = `Replaced entire chapter with ${edit.content.length} chars`
   } else if (edit.operation === 'insert') {
     if (!edit.search && edit.position !== 'start' && edit.position !== 'end') {
       throw new Error('insert requires search or start/end position')
@@ -284,6 +288,9 @@ export async function computeChapterEdit(
     }
     newContent = replaceInHtml(oldContent, searchText, edit.content)
     preview = `Replaced "${searchText.slice(0, 30)}..." -> "${edit.content.slice(0, 30)}..."`
+  } else if (edit.operation === 'replace_all') {
+    newContent = replaceAllInHtml(oldContent, edit.content)
+    preview = `Replaced entire chapter with ${edit.content.length} chars`
   } else if (edit.operation === 'insert') {
     if (!edit.search && edit.position !== 'start' && edit.position !== 'end') {
       throw new Error('insert requires search or start/end position')
@@ -306,7 +313,9 @@ export async function computeChapterEdit(
     preview,
     chapterTitle,
     // 只包含变更片段，用于 diff 展示（不是整章）
-    beforeFragment: edit.operation === 'replace' ? (edit.search?.trim() ?? '') : '',
+    beforeFragment: edit.operation === 'replace_all'
+      ? stripHtmlTags(oldContent)
+      : edit.operation === 'replace' ? (edit.search?.trim() ?? '') : '',
     afterFragment: edit.content
   }
 }

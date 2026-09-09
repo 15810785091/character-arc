@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   ArrowUp,
   BookMarked,
@@ -56,6 +56,10 @@ const modeDotClass = (mode: string): string =>
 function scrollToBottom(smooth = true): void {
   if (!conversationRef.value) return
   conversationRef.value.scrollTo({ top: conversationRef.value.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+}
+
+function restoreConversationPosition(): void {
+  nextTick(() => scrollToBottom(false))
 }
 
 function groupKey(messageId: string, group: ToolGroup): string {
@@ -170,6 +174,9 @@ onMounted(() => {
   }
   nextTick(() => autoResize())
 })
+
+onMounted(restoreConversationPosition)
+onActivated(restoreConversationPosition)
 
 onBeforeUnmount(() => {
   stopRailResize?.()

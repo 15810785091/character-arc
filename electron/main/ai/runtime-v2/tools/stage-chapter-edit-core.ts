@@ -112,7 +112,7 @@ export function makeStageChapterEditToolCore(deps: StageChapterEditToolDeps): To
     definition: {
       name: 'stage_chapter_edit',
       description:
-        '暂存对章节正文的修改，不直接写库。变更进入待审阅暂存区，用户在 UI 中确认后才写回。参数：chapter_id（可选，缺省用当前章节）、operation（replace/insert/append）、content（新内容）、search（replace 定位文本 / insert 锚点）、position（insert 前后 / 起首 / 末尾）、reason（写给用户看的一句话理由）。',
+        '暂存对章节正文的修改，不直接写库。变更进入待审阅暂存区，用户在 UI 中确认后才写回。局部替换用 replace 并提供 search；整章重写必须显式用 replace_all，无需 search；另支持 insert/append。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -122,8 +122,8 @@ export function makeStageChapterEditToolCore(deps: StageChapterEditToolDeps): To
           },
           operation: {
             type: 'string',
-            enum: ['replace', 'insert', 'append'],
-            description: 'replace=按 search 定位后替换；insert=按 search 或 position 插入；append=末尾追加。'
+            enum: ['replace', 'replace_all', 'insert', 'append'],
+            description: 'replace=按 search 定位后局部替换；replace_all=整章替换且无需 search；insert=按 search 或 position 插入；append=末尾追加。'
           },
           content: { type: 'string', description: '要写入的新文本（纯文本，工具会转成段落）。' },
           search: { type: 'string', description: 'replace 必填：目标文本；insert 可选：锚点文本。' },
@@ -161,7 +161,7 @@ export function makeStageChapterEditToolCore(deps: StageChapterEditToolDeps): To
         }
       }
 
-      const operation = String(input.operation) as 'replace' | 'insert' | 'append'
+      const operation = String(input.operation) as 'replace' | 'replace_all' | 'insert' | 'append'
       const content = String(input.content || '')
       const search = input.search ? String(input.search) : undefined
       const position = input.position
