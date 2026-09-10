@@ -7,7 +7,6 @@ import {
   getPlainTextFromEditorContent
 } from '@/features/chapters/editorContent'
 import { formatChapterWordTargetLabel, parseChapterWordTarget } from '@/features/chapters/wordTarget'
-import { loadProjectSkillsContextByIds } from '@/features/projectSkills/context'
 import { useAppStore } from '@/stores/app'
 import type { ReferenceStyleAnalysis } from '@/types/app'
 import { toIpcPayload } from '@/utils/ipcPayload'
@@ -17,7 +16,7 @@ const TASK_KEY = 'chapter-first-draft'
 
 export type FirstDraftStepId = 'memo' | 'draft' | 'audit' | 'repair' | 'humanize' | 'session-note'
 export type FirstDraftFailurePolicy = 'skip' | 'stop'
-export type FirstDraftSkillMode = 'auto' | 'manual'
+export type FirstDraftSkillMode = 'auto' | 'only' | 'off'
 
 export type FirstDraftStepConfig = {
   id: FirstDraftStepId
@@ -74,7 +73,9 @@ function resolveFirstDraftSteps(config: FirstDraftConfig): Record<FirstDraftStep
       ...current,
       id: step.id,
       enabled: step.required ? true : (current?.enabled ?? defaults[step.id].enabled),
-      skillMode: current?.skillMode === 'manual' ? 'manual' : 'auto',
+      skillMode: current?.skillMode === 'only' || current?.skillMode === 'off'
+        ? current.skillMode
+        : (current?.skillMode as string) === 'manual' ? 'only' : 'auto',
       skillIds: Array.isArray(current?.skillIds) ? [...current.skillIds] : []
     }
     return acc
@@ -549,10 +550,15 @@ export function useChapterFirstDraft(): {
           const targetWordCount = activeTargetWordCount.value
           const steps = resolveFirstDraftSteps(config)
           let latestAuditResult: ChapterAuditPayload | null = null
-          const resolveStepProjectSkills = async (stepId: FirstDraftStepId) => {
+          const resolveStepSkillContext = (stepId: FirstDraftStepId) => {
             const step = steps[stepId]
-            if (step.skillMode !== 'manual') return undefined
-            return loadProjectSkillsContextByIds(project, step.skillIds)
+            return {
+              projectSkills: project.projectSkills ?? [],
+              skillPolicy: {
+                mode: step.skillMode,
+                skillIds: step.skillMode === 'only' ? step.skillIds : []
+              }
+            }
           }
           const handleStepError = (stepId: FirstDraftStepId, error: unknown): void => {
             if (steps[stepId].failurePolicy === 'stop') {
@@ -699,10 +705,10 @@ export function useChapterFirstDraft(): {
             }, 8000)
 
             try {
-              const memoProjectSkills = await resolveStepProjectSkills('memo')
+              const memoSkillContext = resolveStepSkillContext('memo')
               const memoStream = await streamTask('chapter-memo', {
                 ...memoBaseContext,
-                ...(memoProjectSkills !== undefined ? { projectSkills: memoProjectSkills } : {}),
+                ...memoSkillContext,
                 userPrompt: appendStepPrompt(config.userPrompt, steps.memo.userPrompt)
               })
               clearTimeout(memoHintTimer)
@@ -717,7 +723,7 @@ export function useChapterFirstDraft(): {
             }
           }
 
-          const draftProjectSkills = await resolveStepProjectSkills('draft')
+          const draftSkillContext = resolveStepSkillContext('draft')
           const context = buildChapterFirstDraftContext({
             project,
             chapter,
@@ -744,7 +750,7 @@ export function useChapterFirstDraft(): {
             chapterContent: '',
             targetWordCount,
             userPrompt: appendStepPrompt(`请生成这一章的完整初稿，目标字数为 ${targetWordCount} 字，这是本次生成的硬约束；请在完成剧情的同时主动控制篇幅。如果当前正文为空，就从零起稿；如果当前正文不为空，也按整章重写处理，而不是续写。${config.userPrompt ? `\n\n补充要求：${config.userPrompt}` : ''}`, steps.draft.userPrompt),
-            ...(draftProjectSkills !== undefined ? { projectSkills: draftProjectSkills } : {}),
+            ...draftSkillContext,
             chapterMemo,
             recentEndingsTrail,
             previousChapterHandoff,
@@ -778,7 +784,7 @@ export function useChapterFirstDraft(): {
               executionLabel.value = '正在流式审计章节质量...'
               isAuditing.value = true
               try {
-                const auditProjectSkills = await resolveStepProjectSkills('audit')
+                const auditSkillContext = resolveStepSkillContext('audit')
                 const auditStream = await streamTask('chapter-audit', {
                   projectId: project.id,
                   chapterId: chapter.id,
@@ -787,7 +793,7 @@ export function useChapterFirstDraft(): {
                   draftText: fullText,
                   measuredWordCount: fullText.trim().length,
                   chapterMemo,
-                  ...(auditProjectSkills !== undefined ? { projectSkills: auditProjectSkills } : {}),
+                  ...auditSkillContext,
                   userPrompt: steps.audit.userPrompt
                 })
                 const auditResp = auditStream.result as { audit?: ChapterAuditPayload } | undefined
@@ -805,7 +811,7 @@ export function useChapterFirstDraft(): {
                     previewTitle.value = '自动修复实时输出'
                     previewContent.value = ''
                     try {
-                      const repairProjectSkills = await resolveStepProjectSkills('repair')
+                      const repairSkillContext = resolveStepSkillContext('repair')
                       const repairStream = await streamTask('chapter-repair', {
                         projectId: project.id,
                         chapterTitle: chapter.title,
@@ -819,7 +825,7 @@ export function useChapterFirstDraft(): {
                         writingStylePrompt: project.writingStylePrompt,
                         auditIssues: criticalIssues,
                         chapterMemoText: formatMemoForRepair(chapterMemo),
-                        ...(repairProjectSkills !== undefined ? { projectSkills: repairProjectSkills } : {}),
+                        ...repairSkillContext,
                         userPrompt: steps.repair.userPrompt
                       })
                       repairedText = repairStream.text
@@ -847,7 +853,7 @@ export function useChapterFirstDraft(): {
             if (steps.humanize.enabled) {
               try {
                 executionLabel.value = '正在执行去 AI 味润色...'
-                const humanizeProjectSkills = await resolveStepProjectSkills('humanize')
+                const humanizeSkillContext = resolveStepSkillContext('humanize')
                 const humanizeStream = await streamTask('chapter-humanize', {
                   projectId: project.id,
                   chapterId: chapter.id,
@@ -858,7 +864,7 @@ export function useChapterFirstDraft(): {
                   writingStyleLabel: project.writingStylePresetId,
                   writingStylePrompt: project.writingStylePrompt,
                   sourceText: finalText,
-                  ...(humanizeProjectSkills !== undefined ? { projectSkills: humanizeProjectSkills } : {}),
+                  ...humanizeSkillContext,
                   userPrompt: steps.humanize.userPrompt
                 })
                 const humanizedText = humanizeStream.text
@@ -891,7 +897,7 @@ export function useChapterFirstDraft(): {
                   ? (auditForNote.pass ? '通过' : `未通过，${auditForNote.issues.length} 个问题`)
                   : '未审计'
                 updateProgress(99, '正在生成写作日志...')
-                const sessionNoteProjectSkills = await resolveStepProjectSkills('session-note')
+                const sessionNoteSkillContext = resolveStepSkillContext('session-note')
                 const noteStream = await streamTask('chapter-session-note', {
                   projectId: project.id,
                   chapterTitle: chapter.title,
@@ -900,7 +906,7 @@ export function useChapterFirstDraft(): {
                   endingSnippet,
                   auditSummary,
                   finalSource: repairedText ? '修复稿' : '初稿',
-                  ...(sessionNoteProjectSkills !== undefined ? { projectSkills: sessionNoteProjectSkills } : {}),
+                  ...sessionNoteSkillContext,
                   userPrompt: steps['session-note'].userPrompt
                 })
                 const noteResult = noteStream.result as { sessionNote?: { craftDecisions: string; effectiveReferences: string; nextChapterAdvice: string } } | undefined

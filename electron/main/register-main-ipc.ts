@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { existsSync } from 'node:fs'
-import { cp, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import * as XLSX from 'xlsx'
@@ -1465,6 +1465,27 @@ export function registerMainIpcHandlers(deps: RegisterMainIpcHandlersDeps): void
       }
     } catch (error) {
       return { success: false, canceled: false, error: error instanceof Error ? error.message : '项目技能导入失败' }
+    }
+  })
+
+  ipcMain.handle('characterarc:global-skill-delete', async (_event, skillId: unknown) => {
+    try {
+      const normalizedSkillId = String(skillId ?? '').trim()
+      if (!normalizedSkillId || basename(normalizedSkillId) !== normalizedSkillId || normalizedSkillId === '.' || normalizedSkillId === '..') {
+        return { success: false, error: 'Skill 标识无效。' }
+      }
+
+      const sharedRoot = getSkillsDirPath()
+      const targetDir = join(sharedRoot, normalizedSkillId)
+      if (!existsSync(join(targetDir, 'SKILL.md'))) {
+        return { success: false, error: '只能删除用户导入的全局 Skill，内置 Skill 不会被删除。' }
+      }
+
+      await rm(targetDir, { recursive: true, force: false })
+      await refreshSkillRegistry()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : '删除全局 Skill 失败' }
     }
   })
 

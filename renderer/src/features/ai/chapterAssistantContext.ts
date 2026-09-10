@@ -147,12 +147,8 @@ export type ChapterFirstDraftContextInput = {
   } | null
   outlineItems: OutlineItem[]
   plotThreads: PlotThread[]                             // 剧情线索（活跃伏笔）
-  projectSkills?: Array<{
-    id: string
-    name: string
-    description: string
-    content: string
-  }>
+  projectSkills?: ProjectSummary['projectSkills']
+  skillPolicy?: ProjectSummary['skillPolicy']
   knowledgeDocuments?: KnowledgeDocument[]
   chapterContent: string
   targetWordCount: number
@@ -645,6 +641,7 @@ export function buildChapterFirstDraftContext(input: ChapterFirstDraftContextInp
       keywords: document.keywords
     })),
     ...(input.projectSkills !== undefined ? { projectSkills: input.projectSkills } : {}),
+    ...(input.skillPolicy !== undefined ? { skillPolicy: input.skillPolicy } : {}),
     userPrompt: input.userPrompt,
     chapterMemo: input.chapterMemo ?? null,
     recentEndingsTrail: input.recentEndingsTrail ?? [],

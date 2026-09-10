@@ -95,6 +95,7 @@ function createWorkbenchInput(): CoverPromptWorkbenchInput | null {
       chapterAssistantTemplates: [],
       novelWorkflowStages: [],
       projectSkills: [],
+      skillPolicy: { mode: 'auto', skillIds: [] },
       selectedReferenceWorkIds: [],
       coverHistory: []
     },

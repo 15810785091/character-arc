@@ -5,10 +5,11 @@ export {
   getAllSkills,
   getSkillById,
   getEnabledSkills,
+  resolveCanonicalSkillIds,
   toScanEntries,
   toContextEntries
 } from './registry'
 export { pickSkillsFor } from './matcher'
-export { isSkillEnabledForTask, resolveSkillEnabledOverrides, resolveTaskSkills } from './task-selection'
+export { isSkillEnabledForTask, resolveSkillEnabledOverrides, resolveSkillStageOverrides, resolveTaskSkills } from './task-selection'
 export type { ResolvedTaskSkills } from './task-selection'
 export { getProjectSkillsDirPath, scanSkillsFromDisk } from './discovery'

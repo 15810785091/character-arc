@@ -1,8 +1,7 @@
 import type { AiAgentStreamHandlers, AiKnowledgeDocumentDraft, AiTaskKnowledgeContext, AiTaskPayload, AiTaskResponse } from '../shared-types'
 import { normalizeSettings, validateSettings, resolveMaxTokens, shouldOmitMaxTokens } from '../settings'
 import { getTaskHandler } from '../tasks'
-import { resolveTaskSkills, getSkillById, getAllSkills } from '../skills'
-import { isSkillEnabledForTask } from '../skills/task-selection'
+import { resolveTaskSkills, resolveSkillEnabledOverrides, getSkillById, getAllSkills } from '../skills'
 import { buildPromptInput } from '../runtime/context-builder'
 import { enrichTaskContextForGeneration } from '../runtime/task-context'
 import { buildRunMeta, buildResponsePreview } from '../runtime/run-meta'
@@ -68,7 +67,7 @@ export async function runStreamingAgentTask(
   const chapterId = String(task.context.chapterId ?? '').trim() || undefined
 
   const handler = getTaskHandler(task.task)
-  const { projectId, skills: candidateSkills, usedSkillIds } = await resolveTaskSkills(task)
+  const { projectId, skills: candidateSkills, usedSkillIds, policy: skillPolicy } = await resolveTaskSkills(task)
   logSelection(task.task, candidateSkills, knowledgeContext?.usedKnowledge ?? [])
   await enrichTaskContextForGeneration(task, settings)
 
@@ -91,12 +90,18 @@ export async function runStreamingAgentTask(
     .map((sel) => getSkillById(sel.id, projectId || undefined))
     .filter((s): s is NonNullable<typeof s> => Boolean(s))
 
-  const requiredSkillDefs = candidateSkillDefs.filter((s) => s.manifest.required)
-  const optionalSkillDefs = candidateSkillDefs.filter((s) => !s.manifest.required)
+  const requiredSkillDefs = skillPolicy.mode === 'only'
+    ? candidateSkillDefs
+    : candidateSkillDefs.filter((s) => s.manifest.required)
+  const optionalSkillDefs = skillPolicy.mode === 'only'
+    ? []
+    : candidateSkillDefs.filter((s) => !s.manifest.required)
+  const allowedSkillIds = new Set(candidateSkillDefs.map((skill) => skill.id))
+  const skillEnabledOverrides = resolveSkillEnabledOverrides(task, projectId)
   const maxSteps = resolveStreamingAgentMaxSteps(task.task)
 
   const requiredSkillBlock = requiredSkillDefs.length
-    ? `\n\n## 强制生效的 SKILLS\n\n${requiredSkillDefs.map((s) => {
+    ? `\n\n## ${skillPolicy.mode === 'only' ? '本轮仅使用的 SKILLS（不得混用其他 Skill）' : '强制生效的 SKILLS'}\n\n${requiredSkillDefs.map((s) => {
         const body = stripSkillFrontmatter(s.content).trim().slice(0, 2000)
         return `### ${s.name}\n${body}`
       }).join('\n\n')}`
@@ -254,10 +259,11 @@ export async function runStreamingAgentTask(
   const skillIndexBlock = task.task === 'chapter-first-draft' ? '' : buildSkillIndex(optionalSkillDefs)
   const systemPrompt = `${prompt.system}${requiredSkillBlock}${preloadedSkillRefsBlock}${chapterToolsBlock}${contextModulesBlock}\n${skillIndexBlock}\n${buildAgentBehaviorRules()}${globalAssistantRules}${settingProposalRules}${chapterDraftRules}${skillUsageHints}`
 
-  const skillTools = createSkillTools({
+  const skillTools = skillPolicy.mode === 'off' ? [] : createSkillTools({
     resolveSkill: (id) => getSkillById(id, projectId || undefined),
     listSkills: () => getAllSkills(projectId || undefined),
-    resolveSkillEnabled: (skill) => isSkillEnabledForTask(task, skill.id, projectId),
+    resolveSkillEnabled: (skill) => skillEnabledOverrides?.get(skill.id) ?? skill.enabled,
+    allowSkillUse: (skill) => allowedSkillIds.has(skill.id),
     allowScriptExecution: (skill) => skill.scope === 'builtin'
   })
 

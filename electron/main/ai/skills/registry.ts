@@ -1,5 +1,6 @@
 import type { SkillDefinition, SkillScanEntry } from './types'
 import { scanSkillsFromDisk } from './discovery'
+import { findSkillDefinitionByIdOrName, mergeSkillDefinitions, resolveSkillContentIdentity } from './registry-merge'
 
 /** 按项目 ID 存储的 skill 注册表，每个项目有独立的 skill Map */
 const skillMaps = new Map<string, Map<string, SkillDefinition>>()
@@ -17,8 +18,13 @@ function resolveRegistryKey(projectId?: string): string {
  * @param projectId - 项目标识
  */
 export async function initRegistry(projectId?: string): Promise<void> {
+  const key = resolveRegistryKey(projectId)
+  if (key !== '_shared') {
+    const sharedSkills = await scanSkillsFromDisk()
+    skillMaps.set('_shared', new Map(sharedSkills.map((s) => [s.id, s])))
+  }
   const skills = await scanSkillsFromDisk(projectId)
-  skillMaps.set(resolveRegistryKey(projectId), new Map(skills.map((s) => [s.id, s])))
+  skillMaps.set(key, new Map(skills.map((s) => [s.id, s])))
   initialized = true
 }
 
@@ -27,8 +33,13 @@ export async function initRegistry(projectId?: string): Promise<void> {
  * @param projectId - 项目标识
  */
 export async function refreshRegistry(projectId?: string): Promise<void> {
+  const key = resolveRegistryKey(projectId)
+  if (key !== '_shared') {
+    const sharedSkills = await scanSkillsFromDisk()
+    skillMaps.set('_shared', new Map(sharedSkills.map((s) => [s.id, s])))
+  }
   const skills = await scanSkillsFromDisk(projectId)
-  skillMaps.set(resolveRegistryKey(projectId), new Map(skills.map((s) => [s.id, s])))
+  skillMaps.set(key, new Map(skills.map((s) => [s.id, s])))
   initialized = true
 }
 
@@ -46,11 +57,30 @@ export function getAllSkills(projectId?: string): SkillDefinition[] {
   const key = resolveRegistryKey(projectId)
   const projectMap = skillMaps.get(key)
   const sharedMap = key !== '_shared' ? skillMaps.get('_shared') : undefined
-  if (!sharedMap) return Array.from(projectMap?.values() ?? [])
-  if (!projectMap) return Array.from(sharedMap.values())
-  const merged = new Map(sharedMap)
-  for (const [k, v] of projectMap) merged.set(k, v)
-  return Array.from(merged.values())
+  if (!sharedMap) return mergeSkillDefinitions([], projectMap?.values() ?? [])
+  if (!projectMap) return mergeSkillDefinitions(sharedMap.values(), [])
+  return mergeSkillDefinitions(sharedMap.values(), projectMap.values())
+}
+
+/** 将旧项目 Skill ID 解析为当前全局优先合并后的规范 ID。 */
+export function resolveCanonicalSkillIds(projectId: string, skillIds: string[]): string[] {
+  const canonicalSkills = getAllSkills(projectId || undefined)
+  const canonicalById = new Map(canonicalSkills.map((skill) => [skill.id, skill]))
+  const canonicalByContent = new Map(
+    canonicalSkills.map((skill) => [resolveSkillContentIdentity(skill), skill])
+  )
+  const rawProjectMap = skillMaps.get(resolveRegistryKey(projectId))
+  const resolved: string[] = []
+
+  for (const id of skillIds) {
+    const exact = canonicalById.get(id)
+    const legacy = rawProjectMap?.get(id)
+    const canonical = exact ?? (legacy
+      ? canonicalByContent.get(resolveSkillContentIdentity(legacy))
+      : undefined)
+    if (canonical && !resolved.includes(canonical.id)) resolved.push(canonical.id)
+  }
+  return resolved
 }
 
 /**
@@ -61,8 +91,14 @@ export function getAllSkills(projectId?: string): SkillDefinition[] {
  */
 export function getSkillById(id: string, projectId?: string): SkillDefinition | undefined {
   const key = resolveRegistryKey(projectId)
-  return skillMaps.get(key)?.get(id)
-    ?? (key !== '_shared' ? skillMaps.get('_shared')?.get(id) : undefined)
+  const canonicalSkills = getAllSkills(projectId)
+  const exact = findSkillDefinitionByIdOrName(canonicalSkills, id)
+  if (exact) return exact
+
+  const legacy = skillMaps.get(key)?.get(id)
+  if (!legacy) return undefined
+  const legacyIdentity = resolveSkillContentIdentity(legacy)
+  return canonicalSkills.find((skill) => resolveSkillContentIdentity(skill) === legacyIdentity)
 }
 
 /**

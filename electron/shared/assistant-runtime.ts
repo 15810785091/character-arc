@@ -23,6 +23,36 @@ export type SurfaceId =
 /** Surface 上下文的绑定范围。 */
 export type SurfaceScope = 'project' | 'chapter' | 'selection'
 
+/** Skill 的使用策略。only 表示严格只允许所列 Skill，off 表示本轮完全禁用。 */
+export type SkillUseMode = 'auto' | 'only' | 'off'
+
+export interface SkillUsePolicy {
+  mode: SkillUseMode
+  skillIds: string[]
+}
+
+export interface SkillExecutionReceiptItem {
+  id: string
+  name: string
+  state: 'candidate' | 'injected' | 'loaded'
+}
+
+export const DEFAULT_SKILL_USE_POLICY: SkillUsePolicy = {
+  mode: 'auto',
+  skillIds: []
+}
+
+/** 兼容旧项目与不可信 IPC 输入，统一收敛为稳定的 Skill 策略。 */
+export function normalizeSkillUsePolicy(value: unknown): SkillUsePolicy {
+  if (!value || typeof value !== 'object') return { ...DEFAULT_SKILL_USE_POLICY }
+  const raw = value as { mode?: unknown; skillIds?: unknown }
+  const mode: SkillUseMode = raw.mode === 'only' || raw.mode === 'off' ? raw.mode : 'auto'
+  const skillIds = Array.isArray(raw.skillIds)
+    ? [...new Set(raw.skillIds.map((id) => String(id ?? '').trim()).filter(Boolean))]
+    : []
+  return { mode, skillIds }
+}
+
 /**
  * Surface 声明：由前端组件在挂载时提供，Runtime 据此配置 tools/context/auto-commit。
  * 这里只声明"能力诉求"，不放具体运行时数据。
@@ -86,6 +116,7 @@ export type TurnEvent =
   | { kind: 'staged_change'; seq: number; changeId: string; toolUseId?: string }
   | { kind: 'staged_change_updated'; seq: number; changeId: string; status: StagedChangeStatus }
   | { kind: 'agent_status'; seq: number; message: string }
+  | { kind: 'skill_plan'; seq: number; mode: SkillUseMode; items: SkillExecutionReceiptItem[] }
   | { kind: 'resumable'; seq: number; label: string; prompt: string; reason?: string }
   | { kind: 'done'; seq: number; content: string }
   | { kind: 'canceled'; seq: number; content?: string }
@@ -331,6 +362,8 @@ export interface TurnSendRequest {
   intentHint?: string
   /** 继续某个未完成批次时传入原 turnId，便于后端后续关联 phase state。 */
   resumeOfTurnId?: string
+  /** 当前对话/本轮覆盖后的 Skill 使用策略。缺省时采用项目默认值。 */
+  skillPolicy?: SkillUsePolicy
 }
 
 export interface TurnAttachment {

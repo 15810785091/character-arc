@@ -19,7 +19,7 @@ import { createChapterTools } from '../agent/tools/chapter-tools'
 import { createProjectDataTools } from '../agent/tools/project-data-tools'
 import { createKnowledgeTools } from '../agent/tools/knowledge-tools'
 import { createSkillTools } from '../agent/tools/skill-tools'
-import { getAllSkills, getSkillById, resolveTaskSkills, isSkillEnabledForTask } from '../skills'
+import { getAllSkills, getSkillById, resolveSkillEnabledOverrides, resolveTaskSkills } from '../skills'
 import type { SkillDefinition, SkillStageId } from '../skills'
 import { normalizeSettings, validateSettings } from '../settings'
 import { assembleContextBlock, contextBuilder, estimateTokens } from './context-builder'
@@ -101,11 +101,13 @@ export function createExecutionPlanner(
       runtimePlan,
       activeScopeRef
     })
-    const { projectId, skills: selectedSkills } = await resolveTaskSkills(skillTask)
+    const { projectId, skills: selectedSkills, policy: skillPolicy } = await resolveTaskSkills(skillTask)
     const matchedSkillDefs = selectedSkills
       .map((sel) => getSkillById(sel.id, projectId || undefined))
       .filter((skill): skill is SkillDefinition => Boolean(skill))
-    const skillPromptBlock = buildV2SkillPromptBlock(matchedSkillDefs, surface)
+    const skillPromptBlock = buildV2SkillPromptBlock(matchedSkillDefs, surface, skillPolicy.mode === 'only')
+    const allowedSkillIds = new Set(selectedSkills.map((skill) => skill.id))
+    const skillEnabledOverrides = resolveSkillEnabledOverrides(skillTask, projectId)
 
     // 2. 拼 system prompt
     const systemPrompt = buildAssistantSystemPrompt({
@@ -142,10 +144,12 @@ export function createExecutionPlanner(
       defaultSourceLabel: 'assistant-v2'
     })
 
-    const skillTools = createSkillTools({
+    const skillTools = skillPolicy.mode === 'off' ? [] : createSkillTools({
       resolveSkill: (id) => getSkillById(id, session.projectId || undefined),
       listSkills: () => getAllSkills(session.projectId || undefined),
-      resolveSkillEnabled: (skill) => isSkillEnabledForTask(skillTask, skill.id, projectId),
+      resolveSkillEnabled: (skill) => skillEnabledOverrides?.get(skill.id) ?? skill.enabled,
+      // 执行计划是唯一授权来源：不在本轮 selected 中的 Skill 无法再被模型按 id 绕过加载。
+      allowSkillUse: (skill) => allowedSkillIds.has(skill.id),
       // 只允许 builtin skill 跑脚本，跟旧路径一致
       allowScriptExecution: (skill) => skill.scope === 'builtin'
     })
@@ -225,7 +229,15 @@ export function createExecutionPlanner(
       settings,
       maxOutputTokens,
       runtimePlan,
-      evidenceLedger
+      evidenceLedger,
+      skillPlan: {
+        mode: skillPolicy.mode,
+        items: matchedSkillDefs.map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          state: (skillPolicy.mode === 'only' || skill.manifest.required) ? 'injected' as const : 'candidate' as const
+        }))
+      }
     }
   }
 }
@@ -249,17 +261,20 @@ function hasSkillToolAccess(surface: SurfaceDefinition): boolean {
 
 function buildV2SkillPromptBlock(
   skills: SkillDefinition[],
-  surface: SurfaceDefinition
+  surface: SurfaceDefinition,
+  forceInject: boolean
 ): string {
   if (!skills.length) return ''
 
-  const requiredSkills = skills.filter((skill) => skill.manifest.required)
-  const optionalSkills = skills.filter((skill) => !skill.manifest.required)
+  const requiredSkills = forceInject ? skills : skills.filter((skill) => skill.manifest.required)
+  const optionalSkills = forceInject ? [] : skills.filter((skill) => !skill.manifest.required)
   const sections: string[] = []
 
   if (requiredSkills.length > 0) {
     sections.push([
-      '## 强制生效的 SKILLS（已直接注入，无需调用 skill_load）',
+      forceInject
+        ? '## 本轮仅使用的 SKILLS（已直接注入，不得加载或混用其他 Skill）'
+        : '## 强制生效的 SKILLS（已直接注入，无需调用 skill_load）',
       '',
       ...requiredSkills.map((skill) => {
         const body = stripSkillFrontmatter(skill.content).trim().slice(0, 2000)
@@ -304,6 +319,7 @@ function createV2SkillTask(params: {
       projectGenre: project?.genre ?? '',
       projectNovelLength: project?.novelLength ?? '',
       projectSkills: project?.projectSkills ?? [],
+      skillPolicy: params.request.skillPolicy ?? project?.skillPolicy,
       userPrompt: params.request.userMessage,
       originalUserPrompt: params.request.userMessage,
       quickAction: params.request.intentHint ?? '',

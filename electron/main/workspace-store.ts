@@ -75,6 +75,7 @@ export async function ensureWorkspaceDb(): Promise<DatabaseSync> {
       writing_style_prompt TEXT NOT NULL DEFAULT '',
       novel_workflow_stages_json TEXT NOT NULL DEFAULT '[]',
       project_skills_json TEXT NOT NULL DEFAULT '[]',
+      skill_policy_json TEXT NOT NULL DEFAULT '{"mode":"auto","skillIds":[]}',
       chapter_assistant_templates_json TEXT NOT NULL DEFAULT '[]'
     ) STRICT;
 
@@ -708,6 +709,10 @@ function ensureProjectColumns(db: DatabaseSync): void {
     db.exec(`ALTER TABLE projects ADD COLUMN project_skills_json TEXT NOT NULL DEFAULT '[]';`)
   }
 
+  if (!columnNames.has('skill_policy_json')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN skill_policy_json TEXT NOT NULL DEFAULT '{"mode":"auto","skillIds":[]}';`)
+  }
+
   if (!columnNames.has('target_platform')) {
     db.exec(`ALTER TABLE projects ADD COLUMN target_platform TEXT NOT NULL DEFAULT '';`)
   }
@@ -747,16 +752,18 @@ export function readWorkspaceSnapshot(db: DatabaseSync): WorkspacePayload | null
       reference_works_json AS referenceWorksJson,
       novel_workflow_stages_json AS novelWorkflowStagesJson,
       project_skills_json AS projectSkillsJson,
+      skill_policy_json AS skillPolicyJson,
       chapter_assistant_templates_json AS chapterAssistantTemplatesJson
     FROM projects
     ORDER BY rowid ASC
   `).all() as Array<
-    Omit<WorkspacePayload['projects'][number], 'chapterAssistantTemplates' | 'novelWorkflowStages' | 'projectSkills' | 'coverHistory' | 'selectedReferenceWorkIds'> & {
+    Omit<WorkspacePayload['projects'][number], 'chapterAssistantTemplates' | 'novelWorkflowStages' | 'projectSkills' | 'skillPolicy' | 'coverHistory' | 'selectedReferenceWorkIds'> & {
       coverHistoryJson?: string
       referenceWorksJson?: string
       chapterAssistantTemplatesJson?: string
       novelWorkflowStagesJson?: string
       projectSkillsJson?: string
+      skillPolicyJson?: string
     }
   >
 
@@ -767,6 +774,7 @@ export function readWorkspaceSnapshot(db: DatabaseSync): WorkspacePayload | null
       selectedReferenceWorkIds: parseJson(project.referenceWorksJson, [] as string[]),
       novelWorkflowStages: parseJson(project.novelWorkflowStagesJson, []),
       projectSkills: parseJson(project.projectSkillsJson, []),
+      skillPolicy: parseJson(project.skillPolicyJson, { mode: 'auto', skillIds: [] }),
       chapterAssistantTemplates: parseJson(project.chapterAssistantTemplatesJson, [])
     })
   )
@@ -1394,8 +1402,8 @@ export function writeWorkspaceSnapshot(db: DatabaseSync, payload: WorkspacePaylo
     }
 
     const insertProject = db.prepare(`
-      INSERT INTO projects (id, title, genre, novel_length, word_count, last_edited, cover, target_platform, cover_history_json, reference_works_json, writing_style_preset_id, writing_style_prompt, novel_workflow_stages_json, project_skills_json, chapter_assistant_templates_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (id, title, genre, novel_length, word_count, last_edited, cover, target_platform, cover_history_json, reference_works_json, writing_style_preset_id, writing_style_prompt, novel_workflow_stages_json, project_skills_json, skill_policy_json, chapter_assistant_templates_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         genre = excluded.genre,
@@ -1410,6 +1418,7 @@ export function writeWorkspaceSnapshot(db: DatabaseSync, payload: WorkspacePaylo
         writing_style_prompt = excluded.writing_style_prompt,
         novel_workflow_stages_json = excluded.novel_workflow_stages_json,
         project_skills_json = excluded.project_skills_json,
+        skill_policy_json = excluded.skill_policy_json,
         chapter_assistant_templates_json = excluded.chapter_assistant_templates_json
     `)
     for (const project of payload.projects) {
@@ -1429,6 +1438,7 @@ export function writeWorkspaceSnapshot(db: DatabaseSync, payload: WorkspacePaylo
         project.writingStylePrompt,
         JSON.stringify(project.novelWorkflowStages ?? []),
         JSON.stringify(project.projectSkills ?? []),
+        JSON.stringify(project.skillPolicy ?? { mode: 'auto', skillIds: [] }),
         JSON.stringify(project.chapterAssistantTemplates ?? [])
       )
     }

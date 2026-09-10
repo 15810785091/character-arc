@@ -1,4 +1,5 @@
 import { toRaw } from 'vue'
+import { normalizeSkillUsePolicy } from '@shared/assistant-runtime'
 import { createDefaultWorkflowDocuments, normalizeWorkflowDocuments } from '@/features/novelWorkflow/documents'
 import { createDefaultNovelWorkflowStages, normalizeNovelWorkflowStages } from '@/features/novelWorkflow/stages'
 import { DEFAULT_CHAPTER_WORD_TARGET, normalizeChapterWordTarget } from '@/features/chapters/wordTarget'
@@ -102,6 +103,7 @@ export function normalizeProjectSummary(project: ProjectSummary): ProjectSummary
     chapterAssistantTemplates: normalizeChapterAssistantTemplates(project.chapterAssistantTemplates),
     novelWorkflowStages: normalizeNovelWorkflowStages(project.novelWorkflowStages),
     projectSkills: normalizeProjectSkills(project.projectSkills),
+    skillPolicy: normalizeSkillUsePolicy(project.skillPolicy),
     targetPlatform: project.targetPlatform?.trim() || '',
     selectedReferenceWorkIds: Array.isArray(project.selectedReferenceWorkIds)
       ? project.selectedReferenceWorkIds.map((id) => String(id).trim()).filter(Boolean)

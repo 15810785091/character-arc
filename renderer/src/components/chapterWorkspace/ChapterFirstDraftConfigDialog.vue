@@ -57,7 +57,8 @@ const projectSkills = computed(() => {
 })
 const selectableProjectSkills = computed(() =>
   projectSkills.value.filter((skill) =>
-    skill.category !== 'tool'
+    skill.enabled
+    && skill.category !== 'tool'
     && skill.category !== 'cover'
     && skill.compatibility !== 'external-only'
   )
@@ -112,12 +113,19 @@ function getSkillUsageText(skill: ProjectSkillItem): string {
 const skillById = computed(() => new Map(projectSkills.value.map((skill) => [skill.id, skill])))
 
 const skillModeOptions: Array<{ label: string; value: FirstDraftSkillMode }> = [
-  { label: '自动选择', value: 'auto' },
-  { label: '手动指定', value: 'manual' }
+  { label: '自动匹配', value: 'auto' },
+  { label: '仅使用指定', value: 'only' },
+  { label: '不使用', value: 'off' }
 ]
 
 const activeStep = computed(() =>
   FIRST_DRAFT_STEP_DEFINITIONS.find((step) => step.id === expandedStepId.value) ?? FIRST_DRAFT_STEP_DEFINITIONS[1]
+)
+const hasInvalidSkillSelection = computed(() =>
+  FIRST_DRAFT_STEP_DEFINITIONS.some((definition) => {
+    const step = steps[definition.id]
+    return step.enabled && step.skillMode === 'only' && step.skillIds.length === 0
+  })
 )
 
 const currentOutlineItem = computed(() => {
@@ -190,15 +198,15 @@ const hasContextPreviewData = computed(() =>
 
 function getSkillModeText(stepId: FirstDraftStepId): string {
   const step = steps[stepId]
-  if (step.skillMode === 'auto') return '自动选择技巧'
-  if (step.skillIds.length === 0) return '手动：不使用技巧'
-  return `手动：${step.skillIds.length} 个技巧`
+  if (step.skillMode === 'auto') return '自动匹配技巧'
+  if (step.skillMode === 'off') return '不使用技巧'
+  return `仅使用：${step.skillIds.length} 个技巧`
 }
 
 function getSkillModeHint(stepId: FirstDraftStepId): string {
-  return steps[stepId].skillMode === 'auto'
-    ? '默认由系统按当前步骤和上下文自动匹配提示词技巧。'
-    : '只使用你勾选的提示词技巧；不选择则本步骤不使用提示词技巧。'
+  if (steps[stepId].skillMode === 'auto') return '由系统按当前步骤、项目启用状态和适用阶段自动匹配。'
+  if (steps[stepId].skillMode === 'off') return '本步骤完全不加载任何 Skill。'
+  return '严格只使用你勾选的 Skill，不会混入其他默认或必选 Skill。'
 }
 
 function getSelectedSkills(stepId: FirstDraftStepId): ProjectSkillItem[] {
@@ -521,7 +529,7 @@ function handleConfirm(): void {
                 />
               </section>
 
-              <template v-if="steps[activeStep.id].skillMode === 'manual'">
+              <template v-if="steps[activeStep.id].skillMode === 'only'">
                 <section class="field-block">
                   <div class="field-block-head">
                     <label class="field-label">指定skills</label>
@@ -532,7 +540,7 @@ function handleConfirm(): void {
                             <CircleHelp :size="14" />
                           </button>
                         </template>
-                        工具类 skills 已隐藏；不选则本步骤不使用 skills。
+                        工具类 Skill 已隐藏；请至少选择一个，系统只会使用所选 Skill。
                       </n-tooltip>
                       <span class="field-count">{{ getSelectedSkills(activeStep.id).length }} 个</span>
                     </div>
@@ -612,7 +620,7 @@ function handleConfirm(): void {
     <template #footer>
       <div class="dialog-footer">
         <n-button size="small" @click="$emit('cancel')">取消</n-button>
-        <n-button type="primary" size="small" @click="handleConfirm">开始生成</n-button>
+        <n-button type="primary" size="small" :disabled="hasInvalidSkillSelection" @click="handleConfirm">开始生成</n-button>
       </div>
     </template>
   </n-modal>

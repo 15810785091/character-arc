@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
-import { NButton } from 'naive-ui'
-import { Square, Undo2, X } from 'lucide-vue-next'
+import { computed, nextTick, ref, watch } from 'vue'
+import { NButton, NCheckbox, NPopover, NRadio, NRadioGroup } from 'naive-ui'
+import { ChevronDown, Sparkles, Square, Undo2, X } from 'lucide-vue-next'
+import type { SkillUseMode, SkillUsePolicy } from '@shared/assistant-runtime'
+import type { ProjectSkillItem } from '@/types/app'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string
   isStreaming: boolean
   isCanceling?: boolean
@@ -11,7 +13,12 @@ const props = defineProps<{
   streamingCharCount?: number
   isEditing?: boolean
   restoredLabel?: string
-}>()
+  skillPolicy?: SkillUsePolicy
+  availableSkills?: ProjectSkillItem[]
+}>(), {
+  skillPolicy: () => ({ mode: 'auto', skillIds: [] }),
+  availableSkills: () => []
+})
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
@@ -19,10 +26,37 @@ const emit = defineEmits<{
   (e: 'cancel'): void
   (e: 'edit-last'): void
   (e: 'clear-restored'): void
+  (e: 'update:skill-policy', value: SkillUsePolicy): void
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 let lastEscapeAt = 0
+
+const skillPolicyLabel = computed(() => {
+  if (props.skillPolicy.mode === 'off') return '技能：不使用'
+  if (props.skillPolicy.mode === 'only') return `技能：仅使用（${props.skillPolicy.skillIds.length}）`
+  return '技能：自动'
+})
+
+const sendDisabled = computed(() => (
+  props.isEditing
+  || !props.modelValue.trim()
+  || (props.skillPolicy.mode === 'only' && props.skillPolicy.skillIds.length === 0)
+))
+
+function setSkillMode(mode: SkillUseMode): void {
+  emit('update:skill-policy', { ...props.skillPolicy, mode })
+}
+
+function toggleSkill(skillId: string, checked: boolean): void {
+  const selected = props.skillPolicy.skillIds
+  emit('update:skill-policy', {
+    mode: 'only',
+    skillIds: checked
+      ? [...new Set([...selected, skillId])]
+      : selected.filter((id) => id !== skillId)
+  })
+}
 
 function handleInput(event: Event) {
   const target = event.target as HTMLTextAreaElement
@@ -95,6 +129,45 @@ watch(
           <span v-else>AI的修改会显示在暂存区，需要你逐条确认。</span>
         </div>
         <div class="actions">
+          <NPopover trigger="click" placement="top-end" :show-arrow="false" :disabled="props.isStreaming || props.isEditing">
+            <template #trigger>
+              <button
+                type="button"
+                class="skill-policy-trigger"
+                :disabled="props.isStreaming || props.isEditing"
+                :title="skillPolicyLabel"
+              >
+                <Sparkles :size="13" />
+                <span>{{ skillPolicyLabel }}</span>
+                <ChevronDown :size="12" />
+              </button>
+            </template>
+            <div class="skill-policy-popover">
+              <strong>本对话 Skill 规则</strong>
+              <NRadioGroup :value="props.skillPolicy.mode" @update:value="setSkillMode">
+                <div class="skill-mode-list">
+                  <NRadio value="auto">自动匹配</NRadio>
+                  <NRadio value="only">仅使用指定</NRadio>
+                  <NRadio value="off">不使用</NRadio>
+                </div>
+              </NRadioGroup>
+              <div v-if="props.skillPolicy.mode === 'only'" class="skill-only-list">
+                <span v-if="props.availableSkills.length === 0" class="skill-empty">当前项目没有已启用的可用 Skill。</span>
+                <template v-else>
+                  <NCheckbox
+                    v-for="skill in props.availableSkills"
+                    :key="skill.id"
+                    :checked="props.skillPolicy.skillIds.includes(skill.id)"
+                    @update:checked="toggleSkill(skill.id, $event)"
+                  >{{ skill.name }}</NCheckbox>
+                </template>
+              </div>
+              <small v-if="props.skillPolicy.mode === 'only' && props.skillPolicy.skillIds.length === 0" class="skill-warning">
+                请至少选择一个 Skill 后再发送。
+              </small>
+              <small v-else class="skill-policy-note">该选择保留在当前对话中，不会修改项目默认规则。</small>
+            </div>
+          </NPopover>
           <NButton
             v-if="props.isStreaming"
             size="small"
@@ -110,7 +183,7 @@ watch(
             v-else
             size="small"
             type="primary"
-            :disabled="props.isEditing || !props.modelValue.trim()"
+            :disabled="sendDisabled"
             @click="emit('send')"
           >
             发送
@@ -257,6 +330,69 @@ textarea::placeholder {
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+.skill-policy-trigger {
+  min-width: 0;
+  max-width: 170px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--arc-border);
+  border-radius: 8px;
+  background: var(--arc-bg-surface);
+  color: var(--arc-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.skill-policy-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-policy-trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--arc-primary) 50%, var(--arc-border));
+  color: var(--arc-primary);
+}
+.skill-policy-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.skill-policy-popover {
+  width: min(320px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px;
+}
+.skill-policy-popover > strong {
+  color: var(--arc-text-primary);
+  font-size: 13px;
+}
+.skill-mode-list,
+.skill-only-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.skill-only-list {
+  max-height: 210px;
+  padding: 9px 10px;
+  overflow-y: auto;
+  border: 1px solid var(--arc-border);
+  border-radius: 8px;
+}
+.skill-empty,
+.skill-policy-note,
+.skill-warning {
+  color: var(--arc-text-hint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.skill-warning {
+  color: var(--arc-danger, #d03050);
 }
 </style>

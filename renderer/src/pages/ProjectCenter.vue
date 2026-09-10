@@ -57,10 +57,7 @@ function openDeconstructionLibrary(): void {
 }
 
 function openSkillsPage(): void {
-  const targetProject = appStore.projects.find((project) => project.id === appStore.selectedProjectId)
-    ?? appStore.projects[0]
-
-  appStore.openSkillsPage(targetProject?.id)
+  appStore.openSkillsPage()
 }
 
 function openCoverWorkbenchPage(): void {

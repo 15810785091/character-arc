@@ -382,10 +382,13 @@ defineExpose({ sendPrompt, sendPromptWithAction, triggerDraft })
         :is-editing="Boolean(assistant.editingTurnId.value)"
         :restored-label="assistant.restoredDraftLabel.value"
         :mode-label="hasSelection ? selectionHint : currentMode.label"
+        :skill-policy="assistant.skillPolicy.value"
+        :available-skills="assistant.availableSkills.value"
         @send="sendWithMode"
         @cancel="assistant.cancel()"
         @edit-last="assistant.startEditingLastTurn()"
         @clear-restored="assistant.clearRestoredDraft()"
+        @update:skill-policy="assistant.updateSkillPolicy"
       />
     </div>
 

@@ -10,18 +10,24 @@
 
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
+import type { ProjectSkillItem } from '@/types/app'
+import { toIpcPayload } from '@/utils/ipcPayload'
 import type {
   AssistantEventPush,
   AssistantSession,
   AssistantTurn,
   PersistedTurnEvent,
+  SkillExecutionReceiptItem,
+  SkillUseMode,
   StagedChange,
   StagedChangeCommitResult,
   SurfaceDefinition,
+  SkillUsePolicy,
   TurnAttachment,
   TurnEvent,
   TurnTruncateResult
 } from '@shared/assistant-runtime'
+import { normalizeSkillUsePolicy } from '@shared/assistant-runtime'
 
 // ============================================================================
 // UI 消息模型
@@ -69,6 +75,8 @@ export interface AssistantMessageView {
   status: 'streaming' | 'done' | 'canceled' | 'error'
   error?: string
   activityText?: string
+  skillReceipt: SkillExecutionReceiptItem[]
+  skillMode?: SkillUseMode
   createdAt: string
 }
 
@@ -176,6 +184,63 @@ export function useAssistant(options: UseAssistantOptions) {
   const editingDraft = ref('')
   const restoredDraftLabel = ref('')
   const isTruncating = ref(false)
+  const skillPolicy = ref<SkillUsePolicy>({ mode: 'auto', skillIds: [] })
+  const discoveredSkills = ref<ProjectSkillItem[]>([])
+  const availableSkills = computed(() => {
+    const project = appStore.projects.find((item) => item.id === options.projectId())
+    const savedById = new Map((project?.projectSkills ?? []).map((skill) => [skill.id, skill]))
+    const source = discoveredSkills.value.length > 0 ? discoveredSkills.value : (project?.projectSkills ?? [])
+    return source.map((skill) => {
+      const saved = savedById.get(skill.id)
+        ?? (project?.projectSkills ?? []).find((item) => (
+          skill.description.trim()
+          && item.description.trim() === skill.description.trim()
+        ))
+      return {
+        ...skill,
+        enabled: saved?.enabled ?? skill.enabled,
+        stageIds: saved?.stageIds ?? skill.stageIds
+      }
+    }).filter((skill) => (
+      skill.enabled && skill.compatibility !== 'external-only'
+    ))
+  })
+
+  async function refreshAvailableSkills(projectId: string): Promise<void> {
+    discoveredSkills.value = []
+    if (!projectId) return
+    try {
+      const result = await window.characterArc.scanProjectSkills(projectId)
+      if (options.projectId() !== projectId || !result.success) return
+      const scannedSkills = result.skills ?? []
+      discoveredSkills.value = scannedSkills
+
+      if (skillPolicy.value.mode === 'only') {
+        const project = appStore.projects.find((item) => item.id === projectId)
+        const canonicalIds = skillPolicy.value.skillIds
+          .map((id) => {
+            if (scannedSkills.some((skill) => skill.id === id)) return id
+            const legacy = project?.projectSkills?.find((skill) => skill.id === id)
+            if (!legacy?.description.trim()) return ''
+            return scannedSkills.find((skill) => skill.description.trim() === legacy.description.trim())?.id ?? ''
+          })
+          .filter((id, index, all) => Boolean(id) && all.indexOf(id) === index)
+        skillPolicy.value = { mode: 'only', skillIds: canonicalIds }
+      }
+    } catch {
+      // Skill 选择器仍可回退到项目已保存的列表，不阻断对话。
+    }
+  }
+
+  function updateSkillPolicy(value: SkillUsePolicy): void {
+    const normalized = normalizeSkillUsePolicy(value)
+    const availableIds = new Set(availableSkills.value.map((skill) => skill.id))
+    skillPolicy.value = {
+      mode: normalized.mode,
+      skillIds: normalized.skillIds.filter((id) => availableIds.has(id))
+    }
+    lastError.value = null
+  }
 
   // === 错误 ===
   const lastError = ref<string | null>(null)
@@ -194,6 +259,8 @@ export function useAssistant(options: UseAssistantOptions) {
     resumable?: AssistantMessageView['resumable']
     finalError?: string
     activityText?: string
+    skillReceipt: SkillExecutionReceiptItem[]
+    skillMode?: SkillUseMode
   } {
     let assistantMessage = ''
     let reasoning = ''
@@ -204,6 +271,8 @@ export function useAssistant(options: UseAssistantOptions) {
     let resumable: AssistantMessageView['resumable']
     let finalError: string | undefined
     let activityText: string | undefined
+    let skillReceipt: SkillExecutionReceiptItem[] = []
+    let skillMode: SkillUseMode | undefined
     let forceNewCommandBlock = false
 
     function appendTextBlock(kind: 'reasoning' | 'assistant', seq: number, delta: string): void {
@@ -301,6 +370,10 @@ export function useAssistant(options: UseAssistantOptions) {
           activityText = normalizeActivity(evt.message)
           break
         }
+        case 'skill_plan':
+          skillMode = evt.mode
+          skillReceipt = evt.items.map((item) => ({ ...item }))
+          break
         case 'done':
           if (evt.content && !assistantMessage) {
             assistantMessage = evt.content
@@ -315,7 +388,15 @@ export function useAssistant(options: UseAssistantOptions) {
       }
     }
 
-    return { assistantMessage, reasoning, toolCalls, flowBlocks, stagedChangeIds, resumable, finalError, activityText }
+    const loadedSkillIds = new Set(toolCalls
+      .filter((tool) => tool.toolName === 'skill_load' && tool.status === 'ok')
+      .map((tool) => String(tool.args.skill_id ?? '').trim()))
+    skillReceipt = skillReceipt.map((item) => (
+      loadedSkillIds.has(item.id) || loadedSkillIds.has(item.name)
+        ? { ...item, state: 'loaded' }
+        : item
+    ))
+    return { assistantMessage, reasoning, toolCalls, flowBlocks, stagedChangeIds, resumable, finalError, activityText, skillReceipt, skillMode }
   }
 
   const messages = computed<AssistantMessageView[]>(() => {
@@ -343,6 +424,8 @@ export function useAssistant(options: UseAssistantOptions) {
         status,
         error: folded.finalError,
         activityText: status === 'streaming' ? folded.activityText : undefined,
+        skillReceipt: folded.skillReceipt,
+        skillMode: folded.skillMode,
         createdAt: turn.createdAt
       }
     })
@@ -601,6 +684,10 @@ export function useAssistant(options: UseAssistantOptions) {
   async function sendText(text: string, sendOptions: AssistantSendOptions = {}): Promise<void> {
     const trimmedText = text.trim()
     if (!trimmedText || isStreaming.value) return
+    if (skillPolicy.value.mode === 'only' && skillPolicy.value.skillIds.length === 0) {
+      lastError.value = '“仅使用”模式需要至少选择一个 Skill。'
+      return
+    }
     let sessionId = activeSessionId.value
     if (!sessionId) {
       const session = await createSession(deriveSessionTitle(trimmedText))
@@ -647,15 +734,18 @@ export function useAssistant(options: UseAssistantOptions) {
     isCanceling.value = false
 
     try {
-      const result = await A.turnSend({
+      // ContextBridge 会在 preload 函数执行前克隆参数。Vue ref 内的对象是 Proxy，
+      // 必须先在渲染进程转换成纯 JSON，否则 Electron 会抛 DataCloneError。
+      const result = await A.turnSend(toIpcPayload({
         sessionId,
         clientRequestId: optimisticTurnId,
         surface: options.surface,
         scopeRef: options.scopeRef?.(),
         userMessage: trimmedText,
         intentHint: sendOptions.intentHint,
-        attachments: sendOptions.attachments
-      })
+        attachments: sendOptions.attachments,
+        skillPolicy: skillPolicy.value
+      }))
       // 事件流已经在 handler 里做了乐观 turn 的替换 + 状态更新，
       // 这里只兜底：若乐观 turn 依然存在（没有任何事件推来），清理掉。
       const optimisticStill = turns.value.find((t) => t.id === optimisticTurnId)
@@ -922,6 +1012,9 @@ export function useAssistant(options: UseAssistantOptions) {
       streamingTurnId.value = null
       cancelEditing()
       restoredDraftLabel.value = ''
+      const project = appStore.projects.find((item) => item.id === options.projectId())
+      skillPolicy.value = normalizeSkillUsePolicy(project?.skillPolicy)
+      void refreshAvailableSkills(options.projectId())
       await reloadSessions()
     },
     { immediate: true }
@@ -967,6 +1060,8 @@ export function useAssistant(options: UseAssistantOptions) {
     restoredDraftLabel,
     isTruncating,
     lastError,
+    skillPolicy,
+    availableSkills,
     // actions
     createSession,
     switchSession,
@@ -980,6 +1075,7 @@ export function useAssistant(options: UseAssistantOptions) {
     updateEditingDraft,
     cancelEditing,
     clearRestoredDraft,
+    updateSkillPolicy,
     undoTurn,
     resendEditedTurn,
     acceptChanges,

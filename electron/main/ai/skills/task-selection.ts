@@ -1,24 +1,54 @@
 import type { AiTaskPayload } from '../shared-types'
-import { getAllSkills, getEnabledSkills, refreshRegistry } from './registry'
+import { normalizeSkillUsePolicy, type SkillUsePolicy } from '../../../shared/assistant-runtime'
+import { getAllSkills, getEnabledSkills, refreshRegistry, resolveCanonicalSkillIds } from './registry'
 import { pickSkillsFor } from './matcher'
-import type { SkillSelection } from './types'
+import type { SkillSelection, SkillStageId } from './types'
 
 export type ResolvedTaskSkills = {
   projectId: string
   skills: SkillSelection[]
   usedSkillIds: string[]
+  policy: SkillUsePolicy
 }
 
 export async function resolveTaskSkills(task: AiTaskPayload): Promise<ResolvedTaskSkills> {
   const projectId = String(task.context.projectId ?? '').trim()
   await refreshRegistry(projectId || undefined).catch(() => {})
 
-  const skills = await pickSkillsFor(task, resolveSkillEnabledOverrides(task, projectId))
+  const rawPolicy = normalizeSkillUsePolicy(task.context.skillPolicy)
+  const policy = rawPolicy.mode === 'only'
+    ? { ...rawPolicy, skillIds: resolveCanonicalSkillIds(projectId, rawPolicy.skillIds) }
+    : rawPolicy
+  if (policy.mode === 'off' || (policy.mode === 'only' && policy.skillIds.length === 0)) {
+    return { projectId, skills: [], usedSkillIds: [], policy }
+  }
+  const skills = await pickSkillsFor(task, {
+    enabledOverrides: resolveSkillEnabledOverrides(task, projectId),
+    stageOverrides: resolveSkillStageOverrides(task, projectId),
+    ...(policy.mode === 'only' ? { onlySkillIds: policy.skillIds } : {})
+  })
   return {
     projectId,
     skills,
-    usedSkillIds: skills.map((skill) => skill.id)
+    usedSkillIds: skills.map((skill) => skill.id),
+    policy
   }
+}
+
+export function resolveSkillStageOverrides(task: AiTaskPayload, projectId = ''): Map<string, SkillStageId[]> | undefined {
+  if (!Array.isArray(task.context.projectSkills) || task.context.projectSkills.length === 0) return undefined
+  const result = new Map<string, SkillStageId[]>()
+  for (const rawSkill of task.context.projectSkills) {
+    if (!rawSkill || typeof rawSkill !== 'object') continue
+    const skill = rawSkill as { id?: unknown; stageIds?: unknown }
+    const id = String(skill.id ?? '').trim()
+    if (!id || !Array.isArray(skill.stageIds)) continue
+    const canonicalId = resolveCanonicalSkillIds(projectId, [id])[0] ?? id
+    result.set(canonicalId, skill.stageIds.filter((stage): stage is SkillStageId => (
+      stage === 'reference' || stage === 'premise' || stage === 'setting' || stage === 'outline' || stage === 'draft'
+    )))
+  }
+  return result.size ? result : undefined
 }
 
 export function resolveSkillEnabledOverrides(
@@ -42,10 +72,12 @@ export function resolveSkillEnabledOverrides(
     }
     if (typeof skill.enabled === 'boolean') {
       hasExplicitEnabledState = true
-      overrideById.set(id, skill.enabled)
+      const canonicalId = resolveCanonicalSkillIds(projectId, [id])[0] ?? id
+      overrideById.set(canonicalId, skill.enabled)
     } else {
       // 兼容旧调用方：它们只传"已启用 skill"列表，条目里没有 enabled 字段。
-      overrideById.set(id, true)
+      const canonicalId = resolveCanonicalSkillIds(projectId, [id])[0] ?? id
+      overrideById.set(canonicalId, true)
     }
   }
 
@@ -56,7 +88,7 @@ export function resolveSkillEnabledOverrides(
 
   return new Map(allSkills.map((skill) => [
     skill.id,
-    overrideById.get(skill.id) ?? (hasExplicitEnabledState ? skill.enabled : false)
+    overrideById.get(skill.id) ?? (hasExplicitEnabledState ? false : skill.enabled)
   ]))
 }
 
@@ -65,9 +97,16 @@ export function isSkillEnabledForTask(
   skillId: string,
   projectId: string
 ): boolean {
+  const policy = normalizeSkillUsePolicy(task.context.skillPolicy)
+  if (policy.mode === 'off') return false
+  const canonicalSkillId = resolveCanonicalSkillIds(projectId, [skillId])[0] ?? skillId
+  const canonicalPolicyIds = policy.mode === 'only'
+    ? resolveCanonicalSkillIds(projectId, policy.skillIds)
+    : []
+  if (policy.mode === 'only' && !canonicalPolicyIds.includes(canonicalSkillId)) return false
   const overrides = resolveSkillEnabledOverrides(task, projectId)
-  if (overrides?.has(skillId)) {
-    return overrides.get(skillId) === true
+  if (overrides?.has(canonicalSkillId)) {
+    return overrides.get(canonicalSkillId) === true
   }
-  return getEnabledSkills(projectId || undefined).some((skill) => skill.id === skillId)
+  return getEnabledSkills(projectId || undefined).some((skill) => skill.id === canonicalSkillId)
 }

@@ -574,6 +574,10 @@ declare global {
         importedSkillIds?: string[]
         error?: string
       }>
+      deleteGlobalSkill: (skillId: string) => Promise<{
+        success: boolean
+        error?: string
+      }>
       getProjectSkillsContext: (projectId: string) => Promise<{
         success: boolean
         skills?: Array<{

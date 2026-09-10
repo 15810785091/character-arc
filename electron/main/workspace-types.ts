@@ -1,4 +1,5 @@
 import type { ReferenceStyleMetric } from './referenceAnalysis'
+import type { SkillUsePolicy } from '../shared/assistant-runtime'
 
 export type KnowledgeDocumentSourceType =
   | 'reference-summary'
@@ -167,6 +168,7 @@ export type WorkspacePayload = {
       enabled: boolean
       stageIds: Array<'reference' | 'premise' | 'setting' | 'outline' | 'draft'>
     }>
+    skillPolicy: SkillUsePolicy
     chapterAssistantTemplates: Array<{
       id: string
       label: string
@@ -637,11 +639,22 @@ export function normalizeProjectRecord(
     writingStylePrompt: project.writingStylePrompt || '',
     novelWorkflowStages: Array.isArray(project.novelWorkflowStages) ? project.novelWorkflowStages : [],
     projectSkills: Array.isArray(project.projectSkills) ? project.projectSkills : [],
+    skillPolicy: normalizeWorkspaceSkillPolicy(project.skillPolicy),
     chapterAssistantTemplates: Array.isArray(project.chapterAssistantTemplates) ? project.chapterAssistantTemplates : [],
     selectedReferenceWorkIds: Array.isArray(project.selectedReferenceWorkIds)
       ? project.selectedReferenceWorkIds.map((id) => String(id).trim()).filter(Boolean)
       : []
   }
+}
+
+function normalizeWorkspaceSkillPolicy(value: unknown): SkillUsePolicy {
+  if (!value || typeof value !== 'object') return { mode: 'auto', skillIds: [] }
+  const raw = value as { mode?: unknown; skillIds?: unknown }
+  const mode = raw.mode === 'only' || raw.mode === 'off' ? raw.mode : 'auto'
+  const skillIds = Array.isArray(raw.skillIds)
+    ? [...new Set(raw.skillIds.map((id) => String(id ?? '').trim()).filter(Boolean))]
+    : []
+  return { mode, skillIds }
 }
 
 export function normalizeCoverWorkbenchHistory(

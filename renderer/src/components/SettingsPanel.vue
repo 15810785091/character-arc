@@ -6,6 +6,7 @@ import { getPlainTextFromEditorContent } from '@/features/chapters/editorContent
 import { autoSaveOptions } from '@/features/settings/autoSave'
 import { buildProjectWritingStyleContext, writingStylePresets } from '@/features/writingStyles/presets'
 import ProjectArchiveImportModal from '@/components/ProjectArchiveImportModal.vue'
+import ProjectSkillsPanel from '@/components/ProjectSkillsPanel.vue'
 import { useAppStore } from '@/stores/app'
 import { toIpcPayload } from '@/utils/ipcPayload'
 import type {
@@ -422,6 +423,8 @@ watch(
           当前章节助理、灵感生成、大纲扩写和角色/设定生成都会优先参考这里的项目风格。
         </div>
       </n-card>
+
+      <ProjectSkillsPanel scope="project" />
     </div>
 
     <ProjectArchiveImportModal ref="archiveImportRef" />

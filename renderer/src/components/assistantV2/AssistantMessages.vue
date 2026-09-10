@@ -332,6 +332,12 @@ function toolStatusText(t: AssistantToolCallView): string {
   return '完成'
 }
 
+function skillStateText(state: AssistantMessageView['skillReceipt'][number]['state']): string {
+  if (state === 'loaded') return '已加载'
+  if (state === 'injected') return '已注入'
+  return '候选'
+}
+
 function commandLabel(t: AssistantToolCallView): string {
   return isEvidenceTool(t.toolName) ? evidenceLabel(t) : describeToolAction(t)
 }
@@ -654,6 +660,14 @@ const hasContent = computed(() => props.messages.length > 0)
       </div>
 
       <div v-if="msg.status === 'canceled'" class="status-tag">已取消</div>
+
+      <div v-if="msg.skillMode === 'off' || msg.skillReceipt.length > 0" class="skill-receipt">
+        <Sparkles :size="13" />
+        <span>{{ msg.skillMode === 'off' ? '本轮未使用 Skill' : '本轮技能' }}</span>
+        <em v-for="skill in msg.skillReceipt" :key="skill.id">
+          {{ skill.name }}（{{ skillStateText(skill.state) }}）
+        </em>
+      </div>
 
       <div v-if="msg.resumable && msg.status === 'done'" class="continue-line">
         <SquareTerminal class="summary-icon" :size="15" :stroke-width="1.75" />
@@ -1351,6 +1365,25 @@ const hasContent = computed(() => props.messages.length > 0)
 .status-tag {
   color: var(--arc-text-hint);
   font-size: 12px;
+}
+.skill-receipt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--arc-text-hint);
+  font-size: 11px;
+}
+.skill-receipt > span {
+  color: var(--arc-text-secondary);
+  font-weight: 600;
+}
+.skill-receipt em {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--arc-primary-soft);
+  color: var(--arc-primary);
+  font-style: normal;
 }
 
 @media (max-width: 720px) {

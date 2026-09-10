@@ -13,6 +13,8 @@ export type SkillToolFactoryOptions = {
   listSkills?: () => SkillDefinition[]
   /** 解析当前项目下 skill 是否启用；未提供时使用 skill 自身默认 enabled。 */
   resolveSkillEnabled?: (skill: SkillDefinition) => boolean
+  /** 当前执行计划是否授权使用该 skill；与项目启用状态分离，避免 skill_list 状态失真。 */
+  allowSkillUse?: (skill: SkillDefinition) => boolean
   /** 是否允许 skill_run_script。builtin skill 默认开；project skill 应受 settings 控制。 */
   allowScriptExecution?: (skill: SkillDefinition) => boolean
   /** 单文件读取上限。0 表示不截断。默认不截断。 */
@@ -92,6 +94,9 @@ export function createSkillTools(opts: SkillToolFactoryOptions): Tool[] {
   function resolveSkillOrError(skillId: string): SkillDefinition | { error: string } {
     const skill = opts.resolveSkill(skillId)
     if (!skill) return { error: `skill 未找到：${skillId}` }
+    const enabled = opts.resolveSkillEnabled?.(skill) ?? skill.enabled
+    const allowed = opts.allowSkillUse?.(skill) ?? enabled
+    if (!enabled || !allowed) return { error: `当前执行策略不允许使用 skill：${skillId}` }
     return skill
   }
 

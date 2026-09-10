@@ -1,21 +1,37 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { BookOpenText, ChevronDown } from 'lucide-vue-next'
-import { NButton, NTag, useMessage } from 'naive-ui'
+import { BookOpenText, ChevronDown, Trash2 } from 'lucide-vue-next'
+import { NButton, NCheckbox, NSelect, NTag, useDialog, useMessage } from 'naive-ui'
+import { normalizeSkillUsePolicy, type SkillUseMode } from '@shared/assistant-runtime'
 import { novelWorkflowStageDefinitions } from '@/features/novelWorkflow/stages'
 import { useAppStore } from '@/stores/app'
 import type { NovelWorkflowStageId, ProjectSkillItem } from '@/types/app'
 
+const props = withDefaults(defineProps<{
+  scope?: 'global' | 'project'
+}>(), {
+  scope: 'global'
+})
+
 const appStore = useAppStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const isScanningProjectSkills = ref(false)
 const isImportingProjectSkills = ref(false)
 const projectSkillItems = ref<ProjectSkillItem[]>([])
 
 const currentProject = computed(() => appStore.currentProject)
+const isProjectScope = computed(() => props.scope === 'project')
+const scanTargetId = computed(() => isProjectScope.value ? (currentProject.value?.id ?? '') : '')
 const workflowStages = computed(() => novelWorkflowStageDefinitions)
 const resolvedProjectSkills = computed(() => {
+  if (!isProjectScope.value) {
+    return projectSkillItems.value.map((skill) => ({
+      ...skill,
+      enabled: skill.compatibility === 'external-only' ? false : skill.enabled
+    }))
+  }
   const stateMap = new Map((currentProject.value?.projectSkills ?? []).map((skill) => [skill.id, skill]))
   return projectSkillItems.value.map((skill) => ({
     ...skill,
@@ -40,6 +56,15 @@ const builtinProjectSkillCount = computed(() =>
 const importedProjectSkillCount = computed(() =>
   resolvedProjectSkills.value.filter((skill) => skill.scope !== 'builtin').length
 )
+const projectSkillPolicy = computed(() => normalizeSkillUsePolicy(currentProject.value?.skillPolicy))
+const selectableDefaultSkills = computed(() =>
+  resolvedProjectSkills.value.filter((skill) => skill.enabled && skill.compatibility !== 'external-only')
+)
+const skillPolicyModeOptions: Array<{ label: string; value: SkillUseMode }> = [
+  { label: '自动匹配', value: 'auto' },
+  { label: '仅使用指定 Skill', value: 'only' },
+  { label: '不使用 Skill', value: 'off' }
+]
 
 const groupedSkills = computed(() => {
   const groups: Array<{ name: string; label: string; skills: typeof resolvedProjectSkills.value }> = []
@@ -47,13 +72,16 @@ const groupedSkills = computed(() => {
 
   for (const skill of resolvedProjectSkills.value) {
     const segments = skill.path.split('/')
-    const groupName = segments.length > 2 ? segments[1] : '_root'
+    const groupName = skill.scope === 'builtin'
+      ? '_builtin'
+      : (segments.length > 2 ? segments[1] : '_imported')
     if (!groupMap.has(groupName)) groupMap.set(groupName, [])
     groupMap.get(groupName)!.push(skill)
   }
 
   const groupLabels: Record<string, string> = {
-    '_root': '内置 Skills'
+    '_builtin': '内置 Skills',
+    '_imported': isProjectScope.value ? '全局与项目扩展' : '用户导入 Skills'
   }
 
   for (const [name, skills] of groupMap) {
@@ -74,7 +102,7 @@ function toggleGroup(groupName: string): void {
 }
 
 watch(
-  () => currentProject.value?.id,
+  () => [props.scope, scanTargetId.value],
   () => {
     void scanProjectSkills()
   },
@@ -118,27 +146,55 @@ async function scanProjectSkills(): Promise<void> {
 
   isScanningProjectSkills.value = true
   try {
-    const result = await window.characterArc.scanProjectSkills(currentProject.value?.id ?? '')
+    const result = await window.characterArc.scanProjectSkills(scanTargetId.value)
     if (!result.success) {
-      throw new Error(result.error ?? '项目技能扫描失败')
+      throw new Error(result.error ?? 'Skill 扫描失败')
     }
 
-    projectSkillItems.value = result.skills ?? []
-    if (currentProject.value?.id) {
+    const scannedSkills = result.skills ?? []
+    projectSkillItems.value = scannedSkills
+    if (isProjectScope.value && currentProject.value?.id) {
+      const previousSkills = currentProject.value.projectSkills ?? []
+      const findPreviousSkill = (skill: ProjectSkillItem): ProjectSkillItem | undefined => {
+        const exact = previousSkills.find((item) => item.id === skill.id)
+        if (exact) return exact
+        const description = skill.description.trim()
+        if (!description) return undefined
+        const matches = previousSkills.filter((item) => item.description.trim() === description)
+        return matches.length > 0 ? (matches.find((item) => item.enabled) ?? matches[0]) : undefined
+      }
+      const canonicalIdByLegacyId = new Map<string, string>()
+      for (const previous of previousSkills) {
+        const canonical = scannedSkills.find((skill) => skill.id === previous.id)
+          ?? scannedSkills.find((skill) => (
+            previous.description.trim()
+            && skill.description.trim() === previous.description.trim()
+          ))
+        if (canonical) canonicalIdByLegacyId.set(previous.id, canonical.id)
+      }
+      const nextPolicyIds = projectSkillPolicy.value.skillIds
+        .map((id) => canonicalIdByLegacyId.get(id) ?? id)
+        .filter((id, index, all) => scannedSkills.some((skill) => skill.id === id) && all.indexOf(id) === index)
+
       appStore.updateProject(currentProject.value.id, {
-        projectSkills: (result.skills ?? []).map((skill) => ({
+        projectSkills: scannedSkills.map((skill) => {
+          const previous = findPreviousSkill(skill)
+          return {
           ...skill,
           enabled: skill.compatibility === 'external-only'
             ? false
-            : (currentProject.value?.projectSkills.find((item) => item.id === skill.id)?.enabled ?? skill.enabled),
-          stageIds:
-            currentProject.value?.projectSkills.find((item) => item.id === skill.id)?.stageIds ??
-            skill.stageIds
-        }))
+            : (previous?.enabled ?? skill.enabled),
+          stageIds: previous?.stageIds ?? skill.stageIds
+          }
+        }),
+        skillPolicy: {
+          ...projectSkillPolicy.value,
+          skillIds: nextPolicyIds
+        }
       })
     }
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '项目技能扫描失败')
+    message.error(error instanceof Error ? error.message : 'Skill 扫描失败')
   } finally {
     isScanningProjectSkills.value = false
   }
@@ -151,26 +207,26 @@ async function importProjectSkillsPackage(): Promise<void> {
 
   isImportingProjectSkills.value = true
   try {
-    const result = await window.characterArc.importProjectSkillsPackage(currentProject.value?.id ?? '')
+    const result = await window.characterArc.importProjectSkillsPackage(scanTargetId.value)
     if (result.canceled) {
       return
     }
 
     if (!result.success) {
-      throw new Error(result.error ?? '项目技能导入失败')
+      throw new Error(result.error ?? 'Skill 导入失败')
     }
 
     await scanProjectSkills()
-    message.success(`已导入 ${result.importedSkillIds?.length ?? 0} 个 skills`)
+    message.success(`已导入 ${result.importedSkillIds?.length ?? 0} 个 Skill`)
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '项目技能导入失败')
+    message.error(error instanceof Error ? error.message : 'Skill 导入失败')
   } finally {
     isImportingProjectSkills.value = false
   }
 }
 
 function toggleProjectSkill(skillId: string): void {
-  if (!currentProject.value?.id) {
+  if (!isProjectScope.value || !currentProject.value?.id) {
     return
   }
 
@@ -184,12 +240,36 @@ function toggleProjectSkill(skillId: string): void {
   )
 
   appStore.updateProject(currentProject.value.id, {
-    projectSkills: nextSkills
+    projectSkills: nextSkills,
+    skillPolicy: {
+      ...projectSkillPolicy.value,
+      skillIds: projectSkillPolicy.value.skillIds.filter((id) => nextSkills.some((skill) => skill.id === id && skill.enabled))
+    }
+  })
+}
+
+function updateSkillPolicyMode(mode: SkillUseMode): void {
+  if (!isProjectScope.value || !currentProject.value?.id) return
+  appStore.updateProject(currentProject.value.id, {
+    skillPolicy: { ...projectSkillPolicy.value, mode }
+  })
+}
+
+function toggleDefaultPolicySkill(skillId: string): void {
+  if (!isProjectScope.value || !currentProject.value?.id) return
+  const selected = projectSkillPolicy.value.skillIds
+  appStore.updateProject(currentProject.value.id, {
+    skillPolicy: {
+      mode: 'only',
+      skillIds: selected.includes(skillId)
+        ? selected.filter((id) => id !== skillId)
+        : [...selected, skillId]
+    }
   })
 }
 
 function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId): void {
-  if (!currentProject.value?.id) {
+  if (!isProjectScope.value || !currentProject.value?.id) {
     return
   }
 
@@ -216,6 +296,30 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
     projectSkills: nextSkills
   })
 }
+
+async function deleteGlobalSkill(skill: ProjectSkillItem): Promise<void> {
+  if (isProjectScope.value || skill.scope === 'builtin') return
+  const result = await window.characterArc.deleteGlobalSkill(skill.id)
+  if (!result.success) {
+    message.error(result.error ?? '删除全局 Skill 失败')
+    return
+  }
+  await scanProjectSkills()
+  message.success(`已删除全局 Skill：${skill.name}`)
+}
+
+function requestDeleteGlobalSkill(skill: ProjectSkillItem): void {
+  if (isProjectScope.value || skill.scope === 'builtin') return
+  dialog.warning({
+    title: '删除全局 Skill',
+    content: `确定删除“${skill.name}”吗？所有项目之后都无法再使用它，需要时可重新导入。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    autoFocus: false,
+    closable: false,
+    onPositiveClick: () => deleteGlobalSkill(skill)
+  })
+}
 </script>
 
 <template>
@@ -224,11 +328,12 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
       <div class="skills-panel-head">
         <div>
           <span class="skills-kicker">Skills</span>
-          <h2>内置 Skills 与项目扩展</h2>
-          <p>软件内置 skills 来自 `resources/skills`。项目导入的 skills 会按当前项目叠加在其上，打包版和开发版都走同一套结构。</p>
+          <h2>{{ isProjectScope ? '当前项目 Skill 设置' : '全局 Skill 设置' }}</h2>
+          <p v-if="isProjectScope">设置当前项目允许使用的 Skill、适用阶段和 AI 对话默认策略；这些设置不会影响其他项目。</p>
+          <p v-else>管理整款软件可用的 Skill。这里导入的 Skill 会对所有项目可见；项目是否启用及如何调用，请在项目设置中配置。</p>
         </div>
         <div class="skills-panel-actions">
-          <n-button round strong :disabled="isImportingProjectSkills" @click="importProjectSkillsPackage">
+          <n-button v-if="!isProjectScope" round strong :disabled="isImportingProjectSkills" @click="importProjectSkillsPackage">
             {{ isImportingProjectSkills ? '导入中...' : '导入 Skill 包' }}
           </n-button>
           <n-button round strong secondary :disabled="isScanningProjectSkills" @click="scanProjectSkills">
@@ -239,7 +344,7 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
 
       <div v-if="resolvedProjectSkills.length > 0" class="project-skill-overview">
         <div class="project-skill-overview-card">
-          <span>已识别 skills</span>
+          <span>已识别 Skill</span>
           <strong>{{ resolvedProjectSkills.length }}</strong>
         </div>
         <div class="project-skill-overview-card">
@@ -251,7 +356,7 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
           <strong>{{ importedProjectSkillCount }}</strong>
         </div>
         <div class="project-skill-overview-card">
-          <span>已启用</span>
+          <span>{{ isProjectScope ? '项目已启用' : '默认可用' }}</span>
           <strong>{{ enabledProjectSkillCount }}</strong>
         </div>
         <div class="project-skill-overview-card">
@@ -264,13 +369,42 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
         </div>
       </div>
 
+      <section v-if="isProjectScope && resolvedProjectSkills.length > 0" class="skill-policy-card">
+        <div class="skill-policy-copy">
+          <strong>AI 对话默认规则</strong>
+          <p>全局助手和章节助手会默认继承这里的设置；你仍可在每个对话框里临时覆盖。</p>
+        </div>
+        <div class="skill-policy-controls">
+          <n-select
+            class="skill-policy-select"
+            :value="projectSkillPolicy.mode"
+            :options="skillPolicyModeOptions"
+            @update:value="updateSkillPolicyMode"
+          />
+          <div v-if="projectSkillPolicy.mode === 'only'" class="skill-policy-picker">
+            <span v-if="selectableDefaultSkills.length === 0" class="skill-policy-empty">请先启用至少一个可用 Skill。</span>
+            <template v-else>
+              <n-checkbox
+                v-for="skill in selectableDefaultSkills"
+                :key="`default-${skill.id}`"
+                :checked="projectSkillPolicy.skillIds.includes(skill.id)"
+                @update:checked="toggleDefaultPolicySkill(skill.id)"
+              >{{ skill.name }}</n-checkbox>
+            </template>
+          </div>
+          <small v-if="projectSkillPolicy.mode === 'only' && projectSkillPolicy.skillIds.length === 0" class="skill-policy-warning">
+            当前没有选择 Skill，对话发送前需要先选择至少一个。
+          </small>
+        </div>
+      </section>
+
       <div v-if="resolvedProjectSkills.length > 0" class="project-skill-groups">
         <div v-for="group in groupedSkills" :key="group.name" class="skill-group">
           <button class="skill-group-header" @click="toggleGroup(group.name)">
             <ChevronDown :size="16" class="skill-group-chevron" :class="{ collapsed: collapsedGroups[group.name] }" />
             <strong>{{ group.label }}</strong>
             <span class="skill-group-count">{{ group.skills.length }} 个</span>
-            <span class="skill-group-enabled">{{ group.skills.filter(s => s.enabled).length }} 已启用</span>
+            <span class="skill-group-enabled">{{ group.skills.filter(s => s.enabled).length }} {{ isProjectScope ? '已启用' : '可用' }}</span>
           </button>
           <div v-if="!collapsedGroups[group.name]" class="project-skill-list">
             <article v-for="skill in group.skills" :key="skill.id" class="project-skill-card">
@@ -290,20 +424,36 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
                   </div>
                   <p class="project-skill-description">{{ skill.description || '当前 skill 未提供描述。' }}</p>
                 </div>
-                <n-button
-                  size="small"
-                  :type="skill.enabled ? 'primary' : 'default'"
-                  :secondary="!skill.enabled"
-                  :disabled="skill.compatibility === 'external-only'"
-                  @click="toggleProjectSkill(skill.id)"
-                >{{ skill.compatibility === 'external-only' ? '暂不接入' : (skill.enabled ? '已启用' : '已停用') }}</n-button>
+                <div class="project-skill-actions">
+                  <n-button
+                    v-if="isProjectScope"
+                    size="small"
+                    :type="skill.enabled ? 'primary' : 'default'"
+                    :secondary="!skill.enabled"
+                    :disabled="skill.compatibility === 'external-only'"
+                    @click="toggleProjectSkill(skill.id)"
+                  >{{ skill.compatibility === 'external-only' ? '暂不接入' : (skill.enabled ? '已启用' : '已停用') }}</n-button>
+                  <n-tag v-else size="small" round :bordered="false" :type="skill.compatibility === 'external-only' ? 'warning' : 'success'">
+                    {{ skill.compatibility === 'external-only' ? '暂不接入' : '全局可用' }}
+                  </n-tag>
+                  <n-button
+                    v-if="!isProjectScope && skill.scope !== 'builtin'"
+                    size="small"
+                    type="error"
+                    secondary
+                    @click="requestDeleteGlobalSkill(skill)"
+                  >
+                    <template #icon><Trash2 :size="14" /></template>
+                    删除
+                  </n-button>
+                </div>
               </div>
               <div class="project-skill-meta-row">
                 <span v-if="skill.source">来源：{{ skill.source }}</span>
                 <span v-if="skill.referencesCount">资料：{{ skill.referencesCount }} 份</span>
                 <span v-if="skill.version">v{{ skill.version }}</span>
               </div>
-              <div class="project-skill-stage-row">
+              <div v-if="isProjectScope" class="project-skill-stage-row">
                 <span class="project-skill-stage-label">适用阶段</span>
                 <div class="project-skill-stage-chips">
                   <n-button
@@ -317,14 +467,28 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
                   >{{ stage.title }}</n-button>
                 </div>
               </div>
+              <div v-else class="project-skill-stage-row">
+                <span class="project-skill-stage-label">默认适用阶段</span>
+                <div class="project-skill-stage-chips">
+                  <n-tag
+                    v-for="stage in workflowStages.filter(item => skill.stageIds.includes(item.id))"
+                    :key="`${skill.id}-global-${stage.id}`"
+                    size="small"
+                    round
+                    :bordered="false"
+                  >{{ stage.title }}</n-tag>
+                  <span v-if="skill.stageIds.length === 0" class="skill-policy-empty">未限定阶段</span>
+                </div>
+              </div>
             </article>
           </div>
         </div>
       </div>
       <div v-else class="skills-empty-state">
         <BookOpenText :size="18" />
-        <strong>还没有识别到项目级 skills</strong>
-        <p>你可以直接导入 `oh-story-claudecode` 仓库根目录、其中的 `skills/` 目录，或任意单个 skill 目录。</p>
+        <strong>{{ isProjectScope ? '当前项目还没有可用 Skill' : '还没有识别到全局 Skill' }}</strong>
+        <p v-if="isProjectScope">先到全局 Skill 设置导入 Skill，再回到这里配置当前项目的启用范围和默认规则。</p>
+        <p v-else>你可以导入包含 `SKILL.md` 的单个 Skill 目录，或包含多个 Skill 目录的技能包。</p>
       </div>
     </section>
   </section>
@@ -380,6 +544,67 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.skill-policy-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.3fr);
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--arc-primary) 28%, var(--arc-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--arc-primary-soft) 54%, var(--arc-bg-surface));
+}
+
+.skill-policy-copy strong {
+  color: var(--arc-text-primary);
+  font-size: 15px;
+}
+
+.skill-policy-copy p {
+  margin: 6px 0 0;
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.skill-policy-controls,
+.skill-policy-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-policy-select {
+  width: 220px;
+}
+
+.skill-policy-picker {
+  max-height: 180px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--arc-border);
+  border-radius: 9px;
+  background: var(--arc-bg-surface);
+}
+
+.skill-policy-empty,
+.skill-policy-warning {
+  color: var(--arc-text-hint);
+  font-size: 12px;
+}
+
+.skill-policy-warning {
+  color: var(--arc-danger, #d03050);
+}
+
+@media (max-width: 760px) {
+  .skill-policy-card {
+    grid-template-columns: 1fr;
+  }
+  .skill-policy-select {
+    width: 100%;
+  }
 }
 
 .project-skill-groups {
@@ -492,6 +717,14 @@ function toggleProjectSkillStage(skillId: string, stageId: NovelWorkflowStageId)
 .project-skill-head strong {
   color: var(--arc-text-primary);
   font-size: 15px;
+}
+
+.project-skill-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .project-skill-title-row {

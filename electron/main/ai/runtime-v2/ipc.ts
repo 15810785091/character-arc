@@ -20,6 +20,8 @@ import {
   type StageBindTargetRequest,
   type StageCommitRequest,
   type StageRejectRequest,
+  type SkillExecutionReceiptItem,
+  type SkillUseMode,
   type SurfaceDefinition,
   type TurnEvent,
   type TurnCancelRequest,
@@ -54,6 +56,7 @@ export type ResolveTurnExecutionPlan = (params: {
   maxOutputTokens?: number
   runtimePlan: AssistantRuntimePlan
   evidenceLedger: EvidenceLedger
+  skillPlan: { mode: SkillUseMode; items: SkillExecutionReceiptItem[] }
 }>
 
 /** 外部依赖注入。 */
@@ -355,7 +358,15 @@ function registerTurnHandlers(): void {
           signal: controller.signal,
           maxSteps: payload.surface.maxSteps,
           maxOutputTokens: plan.maxOutputTokens,
-          onTurnCreated: registerActiveKey
+          onTurnCreated: (turnId) => {
+            registerActiveKey(turnId)
+            appendRuntimeEvent(cm, emitter, session.id, turnId, {
+              kind: 'skill_plan',
+              seq: 0,
+              mode: plan.skillPlan.mode,
+              items: plan.skillPlan.items
+            })
+          }
         })
         const ledgerSnapshot = plan.evidenceLedger.snapshot()
         const resumable = shouldOfferContinuation(plan.runtimePlan, ledgerSnapshot, result)

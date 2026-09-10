@@ -4,9 +4,17 @@ import { getAllSkills, getEnabledSkills } from './registry'
 import { loadSkillReferences } from './loader'
 import { getTaskHandler } from '../tasks'
 import { matchNarrativeFunction } from './narrative-function-map'
+import { isSkillExplicitlyMentioned, selectSkillCandidates } from './selection-priority'
 
 /** 默认最大匹配 skill 数量 */
 const DEFAULT_MAX_SKILLS = 4
+
+export type SkillMatchOptions = {
+  enabledOverrides?: Map<string, boolean>
+  stageOverrides?: Map<string, SkillDefinition['manifest']['stages']>
+  /** 存在时进入严格手动模式：只选择这些 id，忽略自动评分与 required。 */
+  onlySkillIds?: string[]
+}
 
 /** 评分分项明细，用于日志排查与调参 */
 export type ScoreBreakdown = {
@@ -27,7 +35,7 @@ export type ScoreBreakdown = {
  */
 export async function pickSkillsFor(
   task: AiTaskPayload,
-  enabledOverrides?: Map<string, boolean>
+  options: SkillMatchOptions = {}
 ): Promise<SkillSelection[]> {
   let handler: ReturnType<typeof getTaskHandler> | undefined
   try {
@@ -40,10 +48,29 @@ export async function pickSkillsFor(
   }
 
   const projectId = String(task.context.projectId ?? '').trim()
-  const skills = enabledOverrides
-    ? getAllSkills(projectId).filter((skill) => enabledOverrides.get(skill.id) === true)
+  const skills = options.enabledOverrides
+    ? getAllSkills(projectId).filter((skill) => options.enabledOverrides?.get(skill.id) === true)
     : getEnabledSkills(projectId)
   const context = task.context ?? {}
+
+  if (options.onlySkillIds) {
+    const byId = new Map(skills.map((skill) => [skill.id, skill]))
+    const selected = options.onlySkillIds
+      .map((id) => byId.get(id))
+      .filter((skill): skill is SkillDefinition => Boolean(skill && skill.compatibility !== 'external-only'))
+    return loadSelections(selected.map((skill) => ({
+      skill,
+      breakdown: {
+        total: 100,
+        task: 0,
+        stage: 0,
+        trigger: 0,
+        narrative: 0,
+        length: 0,
+        priority: 0
+      }
+    })), task)
+  }
 
   // 从 TaskHandler 读取 maxSkills，允许复杂任务使用更多 skill
   let maxSkills = DEFAULT_MAX_SKILLS
@@ -51,21 +78,24 @@ export async function pickSkillsFor(
     maxSkills = handler.maxSkills
   }
 
+  const stageId = String(context.stageId ?? '').trim()
+  const userPrompt = String(context.userPrompt ?? '')
   const candidates = skills
+    .filter((skill) => {
+      if (isSkillExplicitlyMentioned(skill, userPrompt)) return true
+      if (!stageId || !options.stageOverrides?.has(skill.id)) return true
+      return options.stageOverrides.get(skill.id)?.includes(stageId as SkillDefinition['manifest']['stages'][number]) === true
+    })
     .map((skill) => ({ skill, breakdown: computeScore(skill, task, context) }))
-    .filter((entry) => entry.breakdown.total > 0 || entry.skill.manifest.required)
+  const selected = selectSkillCandidates(candidates, userPrompt, maxSkills, compareCandidates)
 
-  // required skill 无条件保留（即使被高分 optional 挤出 slice），
-  // 兑现 SkillManifest.required 的语义："用户明确要求必须生效"。
-  // optional 仅填补 required 之外的剩余名额。
-  const required = candidates.filter((entry) => entry.skill.manifest.required)
-  const optional = candidates
-    .filter((entry) => !entry.skill.manifest.required)
-    .sort(compareCandidates)
+  return loadSelections(selected, task)
+}
 
-  const remainingSlots = Math.max(0, maxSkills - required.length)
-  const selected = [...required.sort(compareCandidates), ...optional.slice(0, remainingSlots)]
-
+async function loadSelections(
+  selected: Array<{ skill: SkillDefinition; breakdown: ScoreBreakdown }>,
+  task: AiTaskPayload
+): Promise<SkillSelection[]> {
   const results: SkillSelection[] = []
   for (const { skill, breakdown } of selected) {
     const referenceContents = await loadSkillReferences(skill, task)

@@ -1,3 +1,7 @@
+import type { SkillUsePolicy } from '@shared/assistant-runtime'
+
+export type { SkillUsePolicy } from '@shared/assistant-runtime'
+
 /** 主题名称，决定应用的视觉色调 */
 export type ThemeName = 'ocean' | 'jade' | 'amber' | 'rose'
 
@@ -329,6 +333,8 @@ export interface ProjectSummary {
   novelWorkflowStages: NovelWorkflowStageState[]
   /** 项目级 skills 启用状态 */
   projectSkills: ProjectSkillItem[]
+  /** AI 对话默认使用的 Skill 策略 */
+  skillPolicy: SkillUsePolicy
   /** 项目目标平台 */
   targetPlatform: string
   /** 本次用于生成创作记忆的参考作品 ID 列表（指向全局拆书库），可为空 */
