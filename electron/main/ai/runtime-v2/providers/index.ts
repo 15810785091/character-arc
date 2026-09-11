@@ -8,6 +8,7 @@ import type { ConversationManager } from '../conversation-manager'
 import type { SnapshotAccessor } from './shared'
 
 import { makeProjectBriefProvider } from './project-brief'
+import { makeProjectDigestProvider } from './project-digest'
 import { makeCurrentChapterProvider } from './current-chapter'
 import { makeWorldviewProvider } from './worldview'
 import { makeCharactersProvider } from './characters'
@@ -32,6 +33,7 @@ export interface RegisterBuiltinProvidersDeps {
 export function registerBuiltinProviders(deps: RegisterBuiltinProvidersDeps): void {
   const { contextBuilder, snapshot, getConversation } = deps
   contextBuilder.register(makeProjectBriefProvider(snapshot))
+  contextBuilder.register(makeProjectDigestProvider(snapshot))
   contextBuilder.register(makeCurrentChapterProvider(snapshot))
   contextBuilder.register(makeRecentMessagesProvider(getConversation))
   contextBuilder.register(makeWorldviewProvider(snapshot))

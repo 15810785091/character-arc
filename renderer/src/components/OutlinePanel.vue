@@ -9,6 +9,7 @@ import { readCollapsedVolumeIds, writeCollapsedVolumeIds } from '@/features/work
 import { buildProjectWritingStyleContext } from '@/features/writingStyles/presets'
 import { resolveOutlineReferenceIds } from '@/features/ai/outlineReferences'
 import { formatVolumeLabel, normalizeVolumeWordTarget } from '@/features/workspace/outlineVolumes'
+import { resolveOutlineCardPresentation } from '@/features/workspace/outlineCardPresentation'
 import type { OutlineDropPosition } from '@/features/workspace/outlineReorder'
 import { toIpcPayload } from '@/utils/ipcPayload'
 import type { DropdownOption, SelectOption } from 'naive-ui'
@@ -2004,7 +2005,13 @@ watch(
                 </span>
                 <span v-if="item.wordTarget" class="card-word">{{ item.wordTarget }}字</span>
               </div>
-              <p v-if="item.conflict" class="card-conflict">{{ item.conflict }}</p>
+              <p v-if="resolveOutlineCardPresentation(item).summary" class="card-summary">
+                {{ resolveOutlineCardPresentation(item).summary }}
+              </p>
+              <p v-if="resolveOutlineCardPresentation(item).conflict" class="card-conflict">
+                <strong>核心冲突</strong>
+                <span>{{ resolveOutlineCardPresentation(item).conflict }}</span>
+              </p>
               <div class="card-actions">
                 <n-button quaternary size="tiny" @click.stop="openLinkedChapter(item)">
                   <template #icon><FilePlus2 :size="12" /></template>
@@ -3686,6 +3693,7 @@ watch(
   border-radius: 999px;
 }
 
+.card-summary,
 .card-conflict {
   margin: 0 0 10px;
   font-size: 12px;
@@ -3695,10 +3703,34 @@ watch(
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.card-summary {
+  -webkit-line-clamp: 3;
+}
+
+.card-conflict {
+  display: flex;
+  gap: 6px;
+  -webkit-line-clamp: unset;
   padding: 8px 10px;
   background: var(--arc-bg-surface-hover);
   border-radius: var(--arc-radius-sm);
   border-left: 2px solid color-mix(in srgb, var(--arc-primary) 30%, var(--arc-border));
+}
+
+.card-conflict strong {
+  flex: 0 0 auto;
+  color: var(--arc-text-hint);
+  font-weight: 600;
+}
+
+.card-conflict span {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .card-actions {

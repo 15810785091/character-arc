@@ -18,6 +18,7 @@ import {
 } from '@/features/workspace/outlineReorder'
 import { getThemePreset } from '@/theme/presets'
 import { toIpcPayload } from '@/utils/ipcPayload'
+import { resolveOptionalOutlineText } from '@shared/outline-update-policy'
 import { createEmptyWorkspace, normalizeGlobalAssistantProposal, mergeGlobalAssistantProposals, normalizeOutlineReferenceIds } from '@/features/workspace/projectWorkspace'
 import { createWorkspacePersistence } from '@/features/workspace/persistence'
 import {
@@ -2459,7 +2460,7 @@ export const useAppStore = defineStore('app', () => {
         volumeId: payload.volumeId || currentItem.volumeId,
         title: payload.title?.trim() || currentItem.title,
         wordTarget: payload.wordTarget?.trim() || currentItem.wordTarget,
-        conflict: payload.conflict?.trim() || currentItem.conflict,
+        conflict: resolveOptionalOutlineText(currentItem.conflict, payload.conflict),
         summary: payload.summary?.trim() || currentItem.summary,
         relatedCharacterIds: normalizeOutlineReferenceIds(payload.relatedCharacterIds ?? currentItem.relatedCharacterIds),
         relatedOrganizationIds: normalizeOutlineReferenceIds(payload.relatedOrganizationIds ?? currentItem.relatedOrganizationIds),

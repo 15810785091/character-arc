@@ -56,7 +56,7 @@ function makeLoop(runAgentImpl) {
   return { loop, conversation, pushedEvents }
 }
 
-test('项目级全局助手不设置工具次数预算或自动续批', async () => {
+test('项目级全局助手对全项目任务分批并限制资料读取', async () => {
   const surface = {
     id: 'global-page',
     scope: 'project',
@@ -77,15 +77,16 @@ test('项目级全局助手不设置工具次数预算或自动续批', async ()
     handler: async () => ({ content: 'ok' })
   }], plan, ledger)
 
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 8; index += 1) {
     assert.equal((await tool.handler({}, {})).content, 'ok')
   }
+  assert.match((await tool.handler({}, {})).content, /读取次数已达上限/)
 
-  assert.equal(plan.enforceToolBudgets, false)
-  assert.equal(plan.requiresBatching, false)
-  assert.doesNotMatch(plan.guidance, /每批读取预算有限/)
-  assert.equal(ledger.snapshot().readCalls, 10)
-  assert.equal(ledger.snapshot().budgetExhausted, false)
+  assert.equal(plan.enforceToolBudgets, true)
+  assert.equal(plan.requiresBatching, true)
+  assert.match(plan.guidance, /每批读取预算有限/)
+  assert.equal(ledger.snapshot().readCalls, 8)
+  assert.equal(ledger.snapshot().budgetExhausted, true)
 })
 
 test('项目级全局助手允许完整读取章节正文', async () => {

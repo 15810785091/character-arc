@@ -50,6 +50,21 @@ test('Codex exec 使用只读 JSONL 与 stdin，并传递模型和推理强度',
   assert.deepEqual(args.slice(-3), ['--model', 'gpt-5.6-sol', '-'])
 })
 
+test('Codex exec 可按准确 session id 续接，避免使用全局 --last', () => {
+  const args = buildCodexExecArgs({
+    ...codexSettings,
+    model: 'gpt-5.6-sol',
+    codexReasoningEffort: 'medium'
+  }, { resumeSessionId: '0199-session-id' })
+
+  assert.deepEqual(args.slice(0, 2), ['exec', 'resume'])
+  assert.ok(args.includes('--json'))
+  assert.ok(args.includes('0199-session-id'))
+  assert.ok(!args.includes('--last'))
+  assert.ok(!args.includes('--sandbox'))
+  assert.deepEqual(args.slice(-2), ['0199-session-id', '-'])
+})
+
 test('Codex CLI 路径拒绝混入 shell 环境变量', () => {
   assert.throws(
     () => resolveCodexCommand({
@@ -62,6 +77,10 @@ test('Codex CLI 路径拒绝混入 shell 环境变量', () => {
 
 test('Codex JSONL 事件转换为正文、推理和 token 用量', () => {
   const reasoning = []
+  assert.deepEqual(
+    parseCodexJsonLine('{"type":"thread.started","thread_id":"0199-session-id"}'),
+    { sessionId: '0199-session-id' }
+  )
   assert.deepEqual(
     parseCodexJsonLine(
       '{"type":"item.completed","item":{"type":"reasoning","text":"分析中"}}',

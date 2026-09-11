@@ -13,6 +13,7 @@ import type { StagedChangesStore } from '../staged-changes-store'
 import type { SnapshotAccessor } from '../providers/shared'
 import { getProjectView } from '../providers/shared'
 import type { WorkflowDocumentKey } from '../../../workspace-types'
+import { validateOutlineNarrativeUpdate } from '@shared/outline-update-policy'
 
 export interface StageEntitiesToolDeps {
   sessionId: string
@@ -507,7 +508,7 @@ export function makeStageOutlineTool(deps: StageEntitiesToolDeps): Tool {
     definition: {
       name: 'stage_outline',
       description:
-        '暂存大纲节点新增、修改或删除，不直接写库。create 需提供 volume_id/title/summary；volume_id 必须先由 list_outline_volumes 获取，不允许省略。新增或修改时应根据剧情填写 related_character_ids、related_organization_ids、related_worldview_ids。update 需提供 match_id 或 match_title，并提供要改的新字段；delete 需提供 match_id 或 match_title。',
+        '暂存大纲节点新增、修改或删除，不直接写库。create 需提供 volume_id/title/summary；volume_id 必须先由 list_outline_volumes 获取，不允许省略。update 修改 summary 时必须同时提供 conflict，根据新剧情更新、保留或传空字符串清空。新增或修改时应根据剧情填写 related_character_ids、related_organization_ids、related_worldview_ids。update 需提供 match_id 或 match_title；delete 需提供 match_id 或 match_title。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -517,8 +518,8 @@ export function makeStageOutlineTool(deps: StageEntitiesToolDeps): Tool {
           volume_id: { type: 'string', description: 'create 必填、update 可选：所属分卷 ID。必须是 list_outline_volumes 返回的有效 ID。' },
           title: { type: 'string', description: '大纲节点标题。create 必填；update 可选。' },
           word_target: { type: 'string', description: '预估字数，如 "预估 3000字"。' },
-          conflict: { type: 'string', description: '一句话核心冲突。' },
-          summary: { type: 'string', description: '剧情推进摘要。create 必填；update 可选。' },
+          conflict: { type: 'string', description: '一句话核心冲突。update 修改 summary 时必须同时传入；新剧情没有明确冲突时传空字符串以删除旧值。' },
+          summary: { type: 'string', description: '剧情推进摘要。create 必填；update 可选，但修改时必须同时提供 conflict。' },
           related_character_ids: { type: 'array', items: { type: 'string' }, description: '直接涉及的角色 ID，只能使用当前项目已有角色 ID；传空数组可清空。' },
           related_organization_ids: { type: 'array', items: { type: 'string' }, description: '直接涉及的组织 ID，只能使用当前项目已有组织 ID；传空数组可清空。' },
           related_worldview_ids: { type: 'array', items: { type: 'string' }, description: '直接涉及的世界观条目 ID，只能使用当前项目已有设定 ID；传空数组可清空。' },
@@ -536,6 +537,11 @@ export function makeStageOutlineTool(deps: StageEntitiesToolDeps): Tool {
       const reason = readString(input, 'reason') || '（未提供理由）'
       if (!isKnownAction(action)) {
         return { content: 'action 必须是 create、update 或 delete。', isError: true }
+      }
+
+      const narrativeUpdateError = validateOutlineNarrativeUpdate(input)
+      if (narrativeUpdateError) {
+        return { content: narrativeUpdateError, isError: true }
       }
 
       const characterRefs = readReferenceIds(

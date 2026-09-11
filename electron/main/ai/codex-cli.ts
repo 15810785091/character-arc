@@ -19,6 +19,8 @@ export type CodexCliModel = {
 export type CodexCliResult = {
   text: string
   usage?: AiRunUsage
+  /** `thread.started` 返回的精确会话 ID，供同一宿主任务的后续工具轮续接。 */
+  sessionId?: string
 }
 
 type CodexCommand = {
@@ -159,19 +161,16 @@ function buildCodexPrompt(settings: AppSettings, prompt: PromptPair): string {
   ].join('\n')
 }
 
-/** 构建只读、无持久会话的 Codex exec 参数。Prompt 始终通过 stdin 传入。 */
-export function buildCodexExecArgs(settings: AppSettings): string[] {
-  const args = [
-    'exec',
-    '--json',
-    '--skip-git-repo-check',
-    '--sandbox',
-    'read-only',
-    '-c',
-    'features.shell_tool=false',
-    '-c',
-    'web_search="disabled"'
-  ]
+/** 构建只读 Codex exec 参数；后续工具轮次可续接同一会话。Prompt 始终通过 stdin 传入。 */
+export function buildCodexExecArgs(
+  settings: AppSettings,
+  options: { resumeSessionId?: string } = {}
+): string[] {
+  const resumeSessionId = options.resumeSessionId?.trim() ?? ''
+  const args = resumeSessionId
+    ? ['exec', 'resume', '--json', '--skip-git-repo-check']
+    : ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only']
+  args.push('-c', 'features.shell_tool=false', '-c', 'web_search="disabled"')
   const effort = settings.codexReasoningEffort?.trim().toLowerCase()
   if (effort && effort !== 'default') {
     args.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`)
@@ -180,6 +179,7 @@ export function buildCodexExecArgs(settings: AppSettings): string[] {
   if (model && model.toLowerCase() !== 'default') {
     args.push('--model', model)
   }
+  if (resumeSessionId) args.push(resumeSessionId)
   args.push('-')
   return args
 }
@@ -214,7 +214,7 @@ function appendCaptured(current: string, chunk: Buffer | string): string {
 export function parseCodexJsonLine(
   line: string,
   handlers?: AiStreamHandlers
-): { text?: string; usage?: AiRunUsage; error?: string } {
+): { text?: string; usage?: AiRunUsage; error?: string; sessionId?: string } {
   let value: Record<string, unknown>
   try {
     value = JSON.parse(line) as Record<string, unknown>
@@ -223,6 +223,10 @@ export function parseCodexJsonLine(
   }
 
   const type = String(value.type ?? '')
+  if (type === 'thread.started') {
+    const sessionId = String(value.thread_id ?? value.threadId ?? value.session_id ?? '').trim()
+    return sessionId ? { sessionId } : {}
+  }
   if (type === 'turn.failed' || type === 'error') {
     const nested = value.error && typeof value.error === 'object'
       ? String((value.error as Record<string, unknown>).message ?? '')
@@ -270,11 +274,12 @@ export function parseCodexJsonLine(
 export async function runCodexCli(
   settings: AppSettings,
   prompt: PromptPair,
-  options: { signal?: AbortSignal; handlers?: AiStreamHandlers } = {}
+  options: { signal?: AbortSignal; handlers?: AiStreamHandlers; resumeSessionId?: string } = {}
 ): Promise<CodexCliResult> {
   options.signal?.throwIfAborted()
   const command = resolveCodexCommand(settings)
-  const args = [...command.prefixArgs, ...buildCodexExecArgs(settings)]
+  const resumeSessionId = options.resumeSessionId?.trim() ?? ''
+  const args = [...command.prefixArgs, ...buildCodexExecArgs(settings, { resumeSessionId })]
   const child = spawn(command.program, args, {
     cwd: tmpdir(),
     env: buildCodexEnvironment(settings),
@@ -286,6 +291,7 @@ export async function runCodexCli(
     let fullText = ''
     let stderr = ''
     let usage: AiRunUsage | undefined
+    let sessionId = resumeSessionId || undefined
     let eventError = ''
     let settled = false
     const lines = createInterface({ input: child.stdout })
@@ -315,6 +321,7 @@ export async function runCodexCli(
         options.handlers?.onTextDelta(parsed.text)
       }
       if (parsed.usage) usage = parsed.usage
+      if (parsed.sessionId) sessionId = parsed.sessionId
       if (parsed.error) eventError = parsed.error
     })
     child.on('close', (exitCode) => {
@@ -330,12 +337,13 @@ export async function runCodexCli(
       } else if (!fullText.trim()) {
         reject(new Error('Codex CLI 已结束，但没有返回可见正文。'))
       } else {
-        resolve({ text: fullText, usage })
+        resolve({ text: fullText, usage, sessionId })
       }
     })
 
     child.stdin.on('error', (error) => finishReject(classifyRunError(String(error))))
-    child.stdin.end(buildCodexPrompt(settings, prompt))
+    // resume 已保留首轮 system、工具目录和原始请求，只发送本轮新增结果。
+    child.stdin.end(resumeSessionId ? prompt.user.trim() : buildCodexPrompt(settings, prompt))
   })
 }
 

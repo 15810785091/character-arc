@@ -10,9 +10,10 @@ import {
   SquareStack,
   X
 } from 'lucide-vue-next'
-import type { SurfaceDefinition, TurnTruncateResult } from '@shared/assistant-runtime'
+import type { TurnTruncateResult } from '@shared/assistant-runtime'
 import { useAppStore } from '@/stores/app'
 import { useAssistant } from '@/composables/useAssistant'
+import { GLOBAL_ASSISTANT_SURFACE } from '@/features/assistant/assistantSurfaces'
 import AssistantSessionList from './AssistantSessionList.vue'
 import AssistantMessages from './AssistantMessages.vue'
 import AssistantComposer from './AssistantComposer.vue'
@@ -30,16 +31,9 @@ const appStore = useAppStore()
 const { selectedProjectId } = storeToRefs(appStore)
 const message = useMessage()
 
-const SURFACE: SurfaceDefinition = {
-  id: 'global-page',
-  scope: 'project',
-  autoCommit: false,
-  maxSteps: 8
-}
-
 const assistant = useAssistant({
   projectId: () => selectedProjectId.value,
-  surface: SURFACE
+  surface: GLOBAL_ASSISTANT_SURFACE
 })
 
 const composerValue = computed({

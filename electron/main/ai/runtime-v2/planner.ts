@@ -20,7 +20,7 @@ export interface AssistantRuntimePlan {
   guidance: string
 }
 
-const BASE_CONTEXT: ContextProviderId[] = ['project-brief', 'recent-messages', 'skill-index']
+const BASE_CONTEXT: ContextProviderId[] = ['project-brief', 'project-digest', 'recent-messages', 'skill-index']
 
 /** 具体的章节修改方向词——命中说明用户已给出明确改法，无需追问。对齐 v1。 */
 const CONCRETE_EDIT_DIRECTIONS = [
@@ -66,9 +66,10 @@ export function createRuntimePlan(params: {
   request: TurnSendRequest
 }): AssistantRuntimePlan {
   const intent = resolveIntent(params.request, params.surface)
-  const enforceToolBudgets = params.surface.scope !== 'project'
-  const requiresBatching = enforceToolBudgets && shouldBatch(params.request.userMessage, intent)
+  const enforceToolBudgets = true
+  const requiresBatching = shouldBatch(params.request.userMessage, intent)
   const isChapterSurface = params.surface.scope === 'chapter' || params.surface.scope === 'selection'
+  const isProjectSurface = params.surface.scope === 'project'
   const isEdit = intent === 'edit'
 
   // 全局场景下检测"指向章节但方向模糊"的编辑意图，追加提示阻止直接改正文。
@@ -80,9 +81,9 @@ export function createRuntimePlan(params: {
   return {
     intent,
     contextMode: isChapterSurface ? 'chapter' : intent === 'chat' || intent === 'ingest' ? 'minimal' : 'targeted',
-    contextProviders: resolveContextProviders(intent, params.surface),
-    maxReadToolCalls: requiresBatching ? 5 : 4,
-    maxSearchToolCalls: 2,
+    contextProviders: resolveContextProviders(intent, params.surface, params.request.userMessage),
+    maxReadToolCalls: isProjectSurface ? (requiresBatching ? 8 : 6) : (requiresBatching ? 5 : 4),
+    maxSearchToolCalls: isProjectSurface ? 3 : 2,
     maxStageChanges: intent === 'ingest' || intent === 'correct' || isEdit ? 5 : 2,
     defaultReadLimit: requiresBatching ? 5 : 3,
     allowFullChapterRead: isEdit || params.surface.scope === 'selection' || params.surface.scope === 'project',
@@ -130,7 +131,8 @@ function shouldBatch(text: string, intent: AssistantPlanIntent): boolean {
 
 function resolveContextProviders(
   intent: AssistantPlanIntent,
-  surface: SurfaceDefinition
+  surface: SurfaceDefinition,
+  userMessage: string
 ): ContextProviderId[] {
   if (surface.scope === 'chapter' || surface.scope === 'selection') {
     return [...BASE_CONTEXT, 'current-chapter', 'constraints']
@@ -139,15 +141,28 @@ function resolveContextProviders(
     return [...BASE_CONTEXT, 'constraints', 'plot-threads', 'workflow-documents']
   }
   if (intent === 'correct') {
-    return [...BASE_CONTEXT, 'constraints', 'worldview', 'characters', 'outline']
+    return [...BASE_CONTEXT, 'constraints', ...resolveTargetedEntityProviders(userMessage)]
   }
   if (intent === 'entity-edit') {
-    return [...BASE_CONTEXT, 'constraints', 'worldview', 'characters', 'organizations', 'outline', 'plot-threads', 'workflow-documents']
+    return [...BASE_CONTEXT, 'constraints', ...resolveTargetedEntityProviders(userMessage)]
   }
   if (intent === 'ingest') {
     return [...BASE_CONTEXT, 'constraints']
   }
   return BASE_CONTEXT
+}
+
+/** 只预载用户明确点名的资料域；其余内容由项目小结定位后按实体精读。 */
+function resolveTargetedEntityProviders(userMessage: string): ContextProviderId[] {
+  const text = userMessage.replace(/\s+/g, '')
+  const providers: ContextProviderId[] = []
+  if (/(世界观|设定|规则|体系|能力|境界)/.test(text)) providers.push('worldview')
+  if (/(人物|角色|人设|主角|配角|关系)/.test(text)) providers.push('characters')
+  if (/(组织|势力|学院|宗门|家族|成员|归属)/.test(text)) providers.push('organizations')
+  if (/(大纲|剧情节点|卷纲|章节|正文|冲突)/.test(text)) providers.push('outline')
+  if (/(线索|伏笔|悬念)/.test(text)) providers.push('plot-threads')
+  if (/(计划|进度|当前状态|创作记忆)/.test(text)) providers.push('workflow-documents')
+  return [...new Set(providers)]
 }
 
 function buildContinuationPrompt(intent: AssistantPlanIntent): string {

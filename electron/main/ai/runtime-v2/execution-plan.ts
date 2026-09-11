@@ -38,15 +38,14 @@ import { getProjectView, type SnapshotAccessor } from './providers/shared'
 import { saveRuntimeKnowledgeDocument } from './knowledge-writer'
 import { createEvidenceLedger, wrapToolsWithRuntimeBudget } from './evidence-ledger'
 import { createRuntimePlan, type AssistantRuntimePlan } from './planner'
+import { selectToolsForTurn } from './tool-selection-policy'
 
-/** 大多数主流长上下文模型的保守窗口。实际 provider 若更小，会由压缩层兜底。 */
-const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000
 /** 输出预算包含 reasoning token，保留足够空间给回答/工具规划，不随 prompt 无限放大。 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 32000
-const CONTEXT_RESERVE_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
-const LARGE_CONTEXT_BUDGET_TOKENS = DEFAULT_CONTEXT_WINDOW_TOKENS - CONTEXT_RESERVE_TOKENS
 const MINIMAL_CONTEXT_BUDGET_TOKENS = 32000
 const SELECTION_CONTEXT_BUDGET_TOKENS = 64000
+const TARGETED_CONTEXT_BUDGET_TOKENS = 32000
+const CHAPTER_CONTEXT_BUDGET_TOKENS = 56000
 
 export interface CreateExecutionPlannerDeps {
   snapshot: SnapshotAccessor
@@ -210,8 +209,14 @@ export function createExecutionPlanner(
         ...stageEntityTools,
         ...stageProjectEntityTools
       ]
+      const surfaceTools = filterToolsBySurface(combined, surface)
+      const turnTools = selectToolsForTurn(surfaceTools, {
+        surface,
+        intent: runtimePlan.intent,
+        userMessage: request.userMessage
+      })
       return wrapToolsWithRuntimeBudget(
-        filterToolsBySurface(combined, surface),
+        turnTools,
         runtimePlan,
         evidenceLedger
       )
@@ -356,12 +361,12 @@ function resolveContextBudgetTokens(
   contextMode: 'minimal' | 'targeted' | 'chapter'
 ): number {
   if (contextMode === 'minimal') return MINIMAL_CONTEXT_BUDGET_TOKENS
-  if (contextMode === 'chapter') return LARGE_CONTEXT_BUDGET_TOKENS
+  if (contextMode === 'chapter') return CHAPTER_CONTEXT_BUDGET_TOKENS
   if (surface.id === 'global-page' || surface.id === 'global-panel' || surface.scope === 'project') {
-    return LARGE_CONTEXT_BUDGET_TOKENS
+    return TARGETED_CONTEXT_BUDGET_TOKENS
   }
   if (surface.id === 'chapter-panel' || surface.scope === 'chapter') {
-    return LARGE_CONTEXT_BUDGET_TOKENS
+    return CHAPTER_CONTEXT_BUDGET_TOKENS
   }
   return SELECTION_CONTEXT_BUDGET_TOKENS
 }

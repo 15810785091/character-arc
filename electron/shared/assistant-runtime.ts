@@ -239,6 +239,7 @@ export type StagedChangeCommitErrorCode =
 /** 内置 ContextProvider id。第三方扩展可绕过此联合类型。 */
 export type ContextProviderId =
   | 'project-brief'
+  | 'project-digest'
   | 'current-chapter'
   | 'selection'
   | 'recent-messages'

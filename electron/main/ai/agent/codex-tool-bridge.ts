@@ -2,6 +2,12 @@ import type { AiAgentStreamHandlers, AiRunUsage, AppSettings, ToolCallTrace } fr
 import { runCodexCli } from '../codex-cli'
 import { stripReasoningMarkup } from '../reasoning'
 import type { Tool, ToolContext } from './tools/types'
+import {
+  buildCodexRoundInstruction,
+  hasReachedCodexPromptBudget,
+  isCodexFinalizationRound,
+  looksLikeCodexToolProtocol
+} from './codex-tool-loop-policy'
 
 type CodexToolCall = {
   name: string
@@ -33,6 +39,8 @@ export type CodexToolAgentResult = {
 
 const MAX_TOOL_CALLS_PER_STEP = 12
 const MAX_TOOL_RESULT_CHARS = 20_000
+const MAX_TOOL_DESCRIPTION_CHARS = 240
+const MAX_SCHEMA_DESCRIPTION_CHARS = 120
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -142,11 +150,27 @@ export function parseCodexToolEnvelope(text: string): CodexToolEnvelope | null {
   return latest
 }
 
-function buildToolProtocolPrompt(tools: Tool[]): string {
+function compactToolSchema(value: unknown, key = ''): unknown {
+  if (Array.isArray(value)) return value.map((item) => compactToolSchema(item))
+  if (!isRecord(value)) {
+    if (typeof value === 'string' && key === 'description') {
+      return value.slice(0, MAX_SCHEMA_DESCRIPTION_CHARS)
+    }
+    return value
+  }
+  const output: Record<string, unknown> = {}
+  for (const [childKey, childValue] of Object.entries(value)) {
+    if (childKey === 'title' || childKey === '$comment' || childKey === 'examples' || childKey === 'default') continue
+    output[childKey] = compactToolSchema(childValue, childKey)
+  }
+  return output
+}
+
+export function buildToolProtocolPrompt(tools: Tool[]): string {
   const catalog = tools.map((tool) => ({
     name: tool.definition.name,
-    description: tool.definition.description,
-    inputSchema: tool.definition.inputSchema
+    description: tool.definition.description.slice(0, MAX_TOOL_DESCRIPTION_CHARS),
+    inputSchema: compactToolSchema(tool.definition.inputSchema)
   }))
   return [
     '【CharacterArc 宿主工具协议】',
@@ -213,7 +237,6 @@ export async function runCodexToolAgent(
   if (params.disableTools || params.tools.length === 0) return await runTextOnly(params)
 
   const toolsByName = new Map(params.tools.map((tool) => [tool.definition.name, tool]))
-  const protocolPrompt = buildToolProtocolPrompt(params.tools)
   const traces: ToolCallTrace[] = []
   const observations: Array<{
     tool: string
@@ -223,17 +246,35 @@ export async function runCodexToolAgent(
   }> = []
   const seenResults = new Map<string, { content: string; isError: boolean }>()
   let usage: AiRunUsage | undefined
+  let codexSessionId: string | undefined
+  let deliveredObservationCount = 0
+  const protocolPrompt = buildToolProtocolPrompt(params.tools)
 
   for (let step = 1; step <= params.maxSteps; step += 1) {
     params.ctx.signal.throwIfAborted()
+    const tokenBudgetReached = hasReachedCodexPromptBudget(usage?.promptTokens)
+    const forceFinalize = isCodexFinalizationRound(step, params.maxSteps) || tokenBudgetReached
+    const roundInstruction = buildCodexRoundInstruction(
+      step,
+      params.maxSteps,
+      tokenBudgetReached ? 'token-budget' : 'step-limit'
+    )
     params.handlers.onAgentStatus(
       step === 1 ? '正在通过 Codex CLI 思考...' : `Codex CLI 第 ${step} 轮处理中...`,
       step,
       params.maxSteps
     )
-    const prompt = step === 1
-      ? params.userPrompt
-      : buildFollowupPrompt(params.userPrompt, observations)
+    const followupObservations = codexSessionId
+      ? observations.slice(deliveredObservationCount)
+      : observations
+    const prompt = [
+      step === 1
+        ? params.userPrompt
+        : buildFollowupPrompt(params.userPrompt, followupObservations),
+      '',
+      roundInstruction
+    ].join('\n')
+    if (codexSessionId) deliveredObservationCount = observations.length
     const result = await runCodexCli(
       params.settings,
       {
@@ -242,6 +283,7 @@ export async function runCodexToolAgent(
       },
       {
         signal: params.ctx.signal,
+        resumeSessionId: codexSessionId,
         // 协议 JSON 不能作为聊天正文显示；推理过程仍照常转发。
         handlers: {
           onTextDelta: () => {},
@@ -249,12 +291,36 @@ export async function runCodexToolAgent(
         }
       }
     )
+    codexSessionId = result.sessionId ?? codexSessionId
     usage = mergeUsage(usage, result.usage)
     const envelope = parseCodexToolEnvelope(result.text)
 
     // 向下兼容普通文本回复。协议解析失败时仍可聊天，但不会伪造工具执行结果。
     if (!envelope) {
       const finalText = stripReasoningMarkup(result.text).trim()
+      if (looksLikeCodexToolProtocol(finalText)) {
+        const stagedCount = traces.filter((trace) => trace.status === 'ok' && trace.tool.startsWith('stage_')).length
+        if (forceFinalize) {
+          const safeFinalText = stagedCount > 0
+            ? `已生成 ${stagedCount} 条待审阅变更，请在右侧暂存区逐条确认。`
+            : 'Codex CLI 返回的工具协议格式不完整，已阻止原始 JSON 显示和执行。请重试本次请求。'
+          params.handlers.onTextDelta(safeFinalText)
+          return { finalText: safeFinalText, toolCalls: traces, iterations: step, usage }
+        }
+
+        params.handlers.onAgentStatus('工具协议格式不完整，正在自动修复...', step, params.maxSteps)
+        observations.push({
+          tool: 'protocol_validation',
+          arguments: {},
+          content: [
+            '上一轮返回的工具协议 JSON 格式错误，未执行也未向用户展示。',
+            '请修正 JSON 语法后完整重新输出一个协议对象，不要添加 Markdown 或解释文字。',
+            `无效响应片段：${finalText.slice(0, 4000)}`
+          ].join('\n'),
+          isError: true
+        })
+        continue
+      }
       if (finalText) params.handlers.onTextDelta(finalText)
       return { finalText, toolCalls: traces, iterations: step, usage }
     }
@@ -266,6 +332,23 @@ export async function runCodexToolAgent(
       params.handlers.onTextDelta(envelope.finalText)
       return {
         finalText: envelope.finalText,
+        toolCalls: traces,
+        iterations: step,
+        usage
+      }
+    }
+
+    // 最后一轮是专用收尾轮。即使模型忽略协议继续请求工具，也不再执行，
+    // 避免“最后一轮又读一页，随后直接报错”。
+    if (forceFinalize) {
+      const stagedCount = traces.filter((trace) => trace.status === 'ok' && trace.tool.startsWith('stage_')).length
+      const finalText = envelope.finalText
+        || (stagedCount > 0
+          ? `已生成 ${stagedCount} 条待审阅变更，请在右侧暂存区逐条确认。`
+          : '已读取相关资料，但本轮尚未完成最终处理。请点击“继续”，我会基于已有结果继续，不重复遍历资料。')
+      params.handlers.onTextDelta(finalText)
+      return {
+        finalText,
         toolCalls: traces,
         iterations: step,
         usage
