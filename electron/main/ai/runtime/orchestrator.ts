@@ -784,12 +784,16 @@ export async function extractStateDeltaViaLLMWithDiagnostics(
     system: `你是状态变更提取器。根据小说章节正文和当前世界状态，提取本章发生的所有状态变更。
 只输出纯JSON，不要解释。JSON结构：
 {
+  "entity_candidates": [{"kind":"character|organization","name":"正文中的准确专名","aliases":[],"role_or_type":"","description":"","source_quote":"包含该名称的正文原句","has_dialogue":false,"plot_impact":false,"explicit_importance":false}],
   "characters_updated": [{"character_id":"","changes":{"location":{"from":"","to":""},"physical_state":"","mental_state":"","arc_progression":"","power_level":"","inventory_delta":{"added":[],"removed":[]},"new_knowledge":[],"goals_update":{"completed":[],"added":[]}}}],
-  "relationships_delta": [{"relationship_id":"","participants":["",""],"status_change":{"from":"","to":"","pivot_event":""},"new_tension_points":[]}],
-  "foreshadowing_delta": {"planted":[{"id":"","type":"","description":"","method":""}],"advanced":[{"id":"","clue":"","method":""}],"resolved":[{"id":"","method":"","impact":""}]},
+  "relationships_delta": [{"relationship_id":"","participants":["",""],"status_change":{"from":"","to":"","pivot_event":""},"new_tension_points":[],"resolved_tension_points":[],"lifecycle":"active"}],
+  "foreshadowing_delta": {"planted":[{"id":"","type":"","description":"","method":""}],"advanced":[{"id":"","clue":"","method":""}],"resolved":[{"id":"","method":"","impact":""}],"abandoned":[{"id":"","reason":""}]},
   "timeline": {"story_time_elapsed":"","current_story_date":"","events":[],"world_state_changes":[]}
 }
-只包含实际发生变更的字段，无变更的字段省略。角色ID使用角色名称。`,
+只包含实际发生变更的字段，无变更的字段省略。角色ID使用角色名称。
+entity_candidates 只提取项目正式人物/组织库里尚不存在、且正文有准确专名的新人物或新势力。name 必须逐字出现在 source_quote 中；守卫、店小二、黑衣人、老人等泛称和一笔带过的路人不得提取。has_dialogue 表示有独立对白，plot_impact 表示对冲突、资源、关系或后续剧情有实际影响，explicit_importance 仅用于正文明确表明将持续参与主线的实体。不要为了凑数推测姓名。
+关系在本章发生互动时 lifecycle 写 active；明确暂时退出剧情或彻底结束时才写 dormant/archived。旧矛盾被化解时写入 resolved_tension_points。
+伏笔只有在正文明确回收时写 resolved，明确放弃或已被剧情否定时才写 abandoned；不要仅因本章没有提及就判定废弃。`,
     user: `当前世界状态：
 ${stateSnapshot || '（空）'}
 
@@ -800,7 +804,18 @@ ${chapterContent}
   }
 
   try {
-    const generation = await aiGenerateTextWithUsage(settings, prompt, undefined, signal, { disableReasoning: true })
+    // 状态抽取属于后台机械任务：Codex CLI 强制低推理，其他兼容模型也优先低推理，
+    // 不继承正文创作使用的高强度设置。
+    const backgroundSettings = settings.provider === 'codex-cli'
+      ? { ...settings, codexReasoningEffort: 'low' as const }
+      : settings
+    const generation = await aiGenerateTextWithUsage(
+      backgroundSettings,
+      prompt,
+      undefined,
+      signal,
+      { disableReasoning: true, preferLowReasoning: true }
+    )
     const raw = generation.text
     const parsed = extractJsonObject(raw)
     const delta = normalizeStateDelta(parsed)

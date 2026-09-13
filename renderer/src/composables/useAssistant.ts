@@ -1,7 +1,7 @@
 /**
  * useAssistant · Runtime v2 通用 composable
  *
- * 取代旧的 useGlobalAssistant / useChapterAi 双套实现。所有 Surface（global-page /
+ * 取代旧的 useGlobalAssistant / useChapterAi 双套实现。所有 Surface（global-panel /
  * chapter-panel / inline-selection）共享同一份 composable，通过 SurfaceDefinition 区分行为。
  *
  * 完全绕开 appStore.messages / globalAssistantSessions —— 消息、会话、暂存变更
@@ -15,6 +15,7 @@ import { toIpcPayload } from '@/utils/ipcPayload'
 import type {
   AssistantEventPush,
   AssistantSession,
+  AssistantTurnPreview,
   AssistantTurn,
   PersistedTurnEvent,
   SkillExecutionReceiptItem,
@@ -185,6 +186,8 @@ export function useAssistant(options: UseAssistantOptions) {
   const restoredDraftLabel = ref('')
   const isTruncating = ref(false)
   const skillPolicy = ref<SkillUsePolicy>({ mode: 'auto', skillIds: [] })
+  const turnPreview = ref<AssistantTurnPreview | null>(null)
+  const isPreviewing = ref(false)
   const discoveredSkills = ref<ProjectSkillItem[]>([])
   const availableSkills = computed(() => {
     const project = appStore.projects.find((item) => item.id === options.projectId())
@@ -239,6 +242,7 @@ export function useAssistant(options: UseAssistantOptions) {
       mode: normalized.mode,
       skillIds: normalized.skillIds.filter((id) => availableIds.has(id))
     }
+    turnPreview.value = null
     lastError.value = null
   }
 
@@ -681,6 +685,39 @@ export function useAssistant(options: UseAssistantOptions) {
   // Turn 操作
   // ==========================================================================
 
+  async function preview(sendOptions: AssistantSendOptions = {}): Promise<void> {
+    const userMessage = composerValue.value.trim()
+    const projectId = options.projectId()
+    if (!userMessage || !projectId || isStreaming.value || isPreviewing.value) return
+    if (skillPolicy.value.mode === 'only' && skillPolicy.value.skillIds.length === 0) {
+      lastError.value = '“仅使用”模式需要至少选择一个 Skill。'
+      return
+    }
+    isPreviewing.value = true
+    lastError.value = null
+    try {
+      await appStore.persistWorkspace()
+      if (!await appStore.flushAppSettings()) {
+        throw new Error(appStore.persistenceError ?? 'AI 设置保存失败，无法生成本轮预览。')
+      }
+      turnPreview.value = await A.turnPreview(toIpcPayload({
+        projectId,
+        sessionId: activeSessionId.value ?? undefined,
+        surface: options.surface,
+        scopeRef: options.scopeRef?.(),
+        userMessage,
+        intentHint: sendOptions.intentHint,
+        attachments: sendOptions.attachments,
+        skillPolicy: skillPolicy.value
+      }))
+    } catch (error) {
+      lastError.value = formatAssistantError(error)
+      turnPreview.value = null
+    } finally {
+      isPreviewing.value = false
+    }
+  }
+
   async function sendText(text: string, sendOptions: AssistantSendOptions = {}): Promise<void> {
     const trimmedText = text.trim()
     if (!trimmedText || isStreaming.value) return
@@ -715,6 +752,7 @@ export function useAssistant(options: UseAssistantOptions) {
       composerValue.value = ''
     }
     restoredDraftLabel.value = ''
+    turnPreview.value = null
     lastError.value = null
 
     // 先乐观塞一个 streaming turn（真实 turnId 由后端事件确认）
@@ -1034,11 +1072,16 @@ export function useAssistant(options: UseAssistantOptions) {
           streamingTurnId.value = null
           cancelEditing()
           restoredDraftLabel.value = ''
+          turnPreview.value = null
           await reloadSessions()
         }
       }
     )
   }
+
+  watch(composerValue, () => {
+    turnPreview.value = null
+  })
 
   return {
     // state
@@ -1062,12 +1105,15 @@ export function useAssistant(options: UseAssistantOptions) {
     lastError,
     skillPolicy,
     availableSkills,
+    turnPreview,
+    isPreviewing,
     // actions
     createSession,
     switchSession,
     deleteSession,
     renameSession,
     send,
+    preview,
     continueWithPrompt,
     cancel,
     startEditingTurn,

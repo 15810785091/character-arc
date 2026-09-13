@@ -11,7 +11,8 @@ import { backfillProjectStateFromChapters, getProjectBackfillChapterStatuses } f
 import type { BackfillTaskSnapshot } from './state-backfill'
 import type { BackfillSelection } from './state-backfill'
 import { BackfillTaskPauseController } from './state-backfill-task-controller'
-import { buildStoryStateContext } from '../story-state-store'
+import { buildStoryStateOverview, updateStoryStateLifecycle } from '../story-state-store'
+import type { StoryStateLifecycleAction } from '../story-state-store'
 import { ensureWorkspaceDb } from '../workspace-store'
 import { runSpiralBootstrap } from './spiral'
 import type { SpiralBootstrapInput } from './spiral'
@@ -473,10 +474,24 @@ export function registerAiIpcHandlers(injectedDeps: AiIpcDeps): void {
       const id = String(projectId ?? '').trim()
       if (!id) throw new Error('缺少 projectId。')
       const db = await ensureWorkspaceDb()
-      const context = buildStoryStateContext(db, id, [])
-      return { success: true, result: context }
+      const overview = buildStoryStateOverview(db, id)
+      return { success: true, result: overview }
     } catch (error) {
       return { success: false, error: formatAiErrorMessage(error, '读取世界状态失败') }
+    }
+  })
+
+  // ── 手动校正伏笔/关系生命周期；归档只退出默认上下文，不删除历史 ──
+  ipcMain.handle('characterarc:ai-update-story-state-lifecycle', async (_event, payload: unknown) => {
+    try {
+      const req = payload as { projectId?: string; action?: StoryStateLifecycleAction }
+      const projectId = String(req?.projectId ?? '').trim()
+      if (!projectId || !req?.action) throw new Error('缺少 projectId 或状态操作。')
+      const db = await ensureWorkspaceDb()
+      updateStoryStateLifecycle(db, projectId, req.action)
+      return { success: true, result: buildStoryStateOverview(db, projectId) }
+    } catch (error) {
+      return { success: false, error: formatAiErrorMessage(error, '更新世界状态失败') }
     }
   })
 

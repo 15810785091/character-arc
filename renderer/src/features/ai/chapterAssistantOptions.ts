@@ -254,6 +254,19 @@ const builtInTemplates: BuiltInTemplateDefinition[] = [
   }
 ] as const
 
+// 主界面只保留高频、意图互不重叠的五个入口；其余能力交给自然语言和 Skill。
+const CORE_TEMPLATE_IDS = new Set([
+  'continue-scene',
+  'rewrite-selection',
+  'chapter-analysis',
+  'next-outline-draft',
+  'reference-reminders'
+])
+
+function getCoreBuiltInTemplates(): BuiltInTemplateDefinition[] {
+  return builtInTemplates.filter((template) => CORE_TEMPLATE_IDS.has(template.id))
+}
+
 const iconMap: Record<TemplateIconKey, typeof Bot> = {
   bot: Bot,
   globe: Globe2,
@@ -265,16 +278,17 @@ const iconMap: Record<TemplateIconKey, typeof Bot> = {
 }
 
 export function getBuiltInChapterAssistantTemplates(): ChapterAssistantPromptTemplate[] {
-  return builtInTemplates.map(({ iconKey: _iconKey, ...template }) => ({ ...template }))
+  return getCoreBuiltInTemplates().map(({ iconKey: _iconKey, ...template }) => ({ ...template }))
 }
 
 export function getResolvedChapterAssistantTemplates(project?: ProjectSummary | null): ChapterAssistantQuickAction[] {
   const projectTemplates = project?.chapterAssistantTemplates ?? []
-  const builtInIdSet = new Set(builtInTemplates.map((template) => template.id))
+  const legacyBuiltInIdSet = new Set(builtInTemplates.map((template) => template.id))
+  const builtInIdSet = new Set(getCoreBuiltInTemplates().map((template) => template.id))
   const overrideMap = new Map(projectTemplates.filter((template) => builtInIdSet.has(template.id)).map((template) => [template.id, template]))
-  const customTemplates = projectTemplates.filter((template) => !builtInIdSet.has(template.id))
+  const customTemplates = projectTemplates.filter((template) => !legacyBuiltInIdSet.has(template.id))
 
-  const resolvedBuiltIns = builtInTemplates.map((template) => {
+  const resolvedBuiltIns = getCoreBuiltInTemplates().map((template) => {
     const override = overrideMap.get(template.id)
     return {
       ...template,

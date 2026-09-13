@@ -4,6 +4,7 @@ import { FAST_PERSIST_DELAY_MS, formatAutoSaveIntervalLabel, isLiveAutoSaveInter
 import { createDefaultWorkflowDocuments } from '@/features/novelWorkflow/documents'
 import { createDefaultNovelWorkflowStages } from '@/features/novelWorkflow/stages'
 import { DEFAULT_CHAPTER_WORD_TARGET, normalizeChapterWordTarget } from '@/features/chapters/wordTarget'
+import { materializeChapterSplit, type ChapterSplitPlan } from '@/features/chapters/chapterSplit'
 import { formatProjectWordCount } from '@/features/projects/wordCount'
 import { createProjectEditedAt } from '@/features/projects/lastEdited'
 import {
@@ -1652,15 +1653,16 @@ export const useAppStore = defineStore('app', () => {
 
   // ── 组织 CRUD ──
   /** 创建新组织，插入到列表头部 */
-  function createOrganization(payload?: Partial<OrganizationEntry>): void {
+  function createOrganization(payload?: Partial<OrganizationEntry>): string {
     const createdAt = toIsoTimestamp(payload?.createdAt)
     const updatedAt = toIsoTimestamp(payload?.updatedAt || payload?.createdAt)
+    const organizationId = uniqueId('org')
 
     updateCurrentWorkspace((workspace) => ({
       ...workspace,
       organizations: reindexOrganizations([
         {
-          id: uniqueId('org'),
+          id: organizationId,
           name: payload?.name?.trim() || `新组织 ${workspace.organizations.length + 1}`,
           type: payload?.type?.trim() || '中立势力',
           description:
@@ -1676,6 +1678,7 @@ export const useAppStore = defineStore('app', () => {
       ])
     }))
     schedulePersist('fast')
+    return organizationId
   }
 
   function updateOrganization(organizationId: string, payload: Partial<OrganizationEntry>): void {
@@ -2180,6 +2183,68 @@ export const useAppStore = defineStore('app', () => {
     schedulePersist('fast')
   }
 
+  /** 为尚未绑定章节的大纲节点一次性建立章节骨架；只复用全新项目自带的空白占位章。 */
+  function createChaptersFromOutlineItems(
+    items: Array<Pick<OutlineItem, 'id' | 'volumeId' | 'title' | 'summary' | 'wordTarget'>>
+  ): string[] {
+    const createdChapterIds: string[] = []
+    updateCurrentWorkspace((workspace) => {
+      const linkedOutlineIds = new Set(
+        workspace.chapters.map((chapter) => chapter.outlineItemId).filter(Boolean)
+      )
+      const uniqueItems = items.filter((item, index, source) => (
+        item.id
+        && !linkedOutlineIds.has(item.id)
+        && source.findIndex((candidate) => candidate.id === item.id) === index
+      ))
+      if (uniqueItems.length === 0) return workspace
+
+      let nextChapters = [...workspace.chapters]
+      const starterIndex = nextChapters.length === 1 && (
+        !nextChapters[0].outlineItemId
+        && !nextChapters[0].content.replace(/<[^>]*>/g, '').trim()
+        && nextChapters[0].summary === '待补充章节摘要'
+      ) ? 0 : -1
+
+      uniqueItems.forEach((item, index) => {
+        const chapter: ChapterDraft = {
+          id: starterIndex === 0 && index === 0 ? nextChapters[0].id : uniqueId('chapter'),
+          outlineItemId: item.id,
+          volumeId: item.volumeId || getWorkspacePrimaryVolumeId(workspace),
+          title: item.title?.trim() || '新章节',
+          summary: item.summary?.trim() || '待补充章节摘要',
+          status: 'draft',
+          wordTarget: normalizeChapterWordTarget(item.wordTarget),
+          content: ''
+        }
+        createdChapterIds.push(chapter.id)
+        if (starterIndex === 0 && index === 0) nextChapters[0] = chapter
+        else nextChapters = insertIntoVolumeSection(nextChapters, chapter)
+      })
+
+      const createdOutlineIds = new Set(uniqueItems.map((item) => item.id))
+      return {
+        ...workspace,
+        outlineItems: workspace.outlineItems.map((item) => (
+          createdOutlineIds.has(item.id) && item.status !== 'done'
+            ? { ...item, status: 'drafting' as const }
+            : item
+        )),
+        chapters: nextChapters
+      }
+    })
+
+    if (createdChapterIds.length > 0) {
+      selectedChapterId.value = createdChapterIds[0]
+      pendingChapterInsertion.value = null
+      currentChapterSelection.value = null
+      activePanel.value = 'chapters'
+      currentView.value = 'chapter-studio'
+      schedulePersist('fast')
+    }
+    return createdChapterIds
+  }
+
   /** 拖拽移动章节位置，跨卷时自动更新章节所属分卷 */
   function moveChapter(
     chapterId: string,
@@ -2572,6 +2637,49 @@ export const useAppStore = defineStore('app', () => {
       pendingChapterInsertion.value = null
     }
     schedulePersist('fast')
+  }
+
+  /** 按预览计划拆分章节；第一部分保留原 ID，并保存拆分前完整版本。 */
+  function splitChapter(plan: ChapterSplitPlan): string[] {
+    const createdChapterIds: string[] = []
+    updateCurrentWorkspace((workspace) => {
+      const sourceIndex = workspace.chapters.findIndex((chapter) => chapter.id === plan.sourceChapterId)
+      if (sourceIndex < 0) {
+        throw new Error('要拆分的章节不存在或已被删除。')
+      }
+      const source = workspace.chapters[sourceIndex]
+      const parts = materializeChapterSplit(source, plan, () => uniqueId('chapter'))
+      const nextChapters = [...workspace.chapters]
+      nextChapters.splice(sourceIndex, 1, ...parts)
+      createdChapterIds.push(...parts.map((chapter) => chapter.id))
+      const version = normalizeChapterVersion({
+        id: uniqueId('chapter-version'),
+        chapterId: source.id,
+        title: source.title,
+        summary: source.summary,
+        status: source.status,
+        wordTarget: source.wordTarget,
+        content: source.content,
+        createdAt: new Date().toISOString()
+      })
+      return {
+        ...workspace,
+        chapters: nextChapters,
+        chapterVersions: [version, ...workspace.chapterVersions]
+      }
+    })
+
+    selectedChapterId.value = plan.sourceChapterId
+    pendingChapterInsertion.value = null
+    currentChapterSelection.value = null
+    dismissChapterPostGenerationIssues(plan.sourceChapterId)
+    if (chapterStateWarnings.value.has(plan.sourceChapterId)) {
+      const nextWarnings = new Map(chapterStateWarnings.value)
+      nextWarnings.delete(plan.sourceChapterId)
+      chapterStateWarnings.value = nextWarnings
+    }
+    schedulePersist('fast')
+    return createdChapterIds
   }
 
   function updateChapterTitle(value: string): void {
@@ -3465,6 +3573,7 @@ export const useAppStore = defineStore('app', () => {
     createWorldviewEntry,
     createChapter,
     createChapterFromOutlineItem,
+    createChaptersFromOutlineItems,
     chapterVolumeGroups,
     activeGlobalAssistantSession,
     currentTheme,
@@ -3478,6 +3587,7 @@ export const useAppStore = defineStore('app', () => {
     isPersisting,
     isPersistencePending,
     deleteChapter,
+    splitChapter,
     deleteCharacter,
     deleteCharacterRelationship,
     deleteInspirationEntry,

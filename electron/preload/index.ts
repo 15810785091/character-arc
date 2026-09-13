@@ -141,6 +141,8 @@ contextBridge.exposeInMainWorld('characterArc', {
   generateImage: (payload: unknown) => ipcRenderer.invoke('characterarc:ai-generate-image', toIpcPayload(payload)),
   /** 读取当前项目的结构化世界状态（角色状态、伏笔、关系、时间线、世界规则、倒计时） */
   readStoryState: (projectId: string) => ipcRenderer.invoke('characterarc:ai-read-story-state', projectId),
+  /** 手动校正伏笔或角色关系的生命周期状态 */
+  updateStoryStateLifecycle: (payload: unknown) => ipcRenderer.invoke('characterarc:ai-update-story-state-lifecycle', toIpcPayload(payload)),
   /** 螺旋式深度生成（3圈：骨架→展开→校验） */
   spiralBootstrap: (payload: unknown) => ipcRenderer.invoke('characterarc:ai-spiral-bootstrap', toIpcPayload(payload)),
   /** 取消正在进行的螺旋生成 */
@@ -272,6 +274,8 @@ contextBridge.exposeInMainWorld('characterArc', {
     sessionRename: (payload: unknown) =>
       ipcRenderer.invoke('characterarc:assistant:session:rename', toIpcPayload(payload)),
     // Turn
+    turnPreview: (payload: unknown) =>
+      ipcRenderer.invoke('characterarc:assistant:turn:preview', toIpcPayload(payload)),
     turnSend: (payload: unknown) =>
       ipcRenderer.invoke('characterarc:assistant:turn:send', toIpcPayload(payload)),
     turnCancel: (payload: unknown) =>

@@ -44,3 +44,18 @@ test('knowledge_save_document keeps valid content intact', async () => {
   assert.equal(saved.length, 1)
   assert.equal(saved[0].content, '完整内容')
 })
+
+test('knowledge_save_document stores audit reports as a separate non-canon type', async () => {
+  const saved = []
+  const [tool] = createKnowledgeTools({ collectDocument: (doc) => saved.push(doc) })
+
+  const result = await tool.handler({
+    title: '里程碑审计',
+    sourceType: 'audit-report',
+    sourceLabel: 'story-deep-audit',
+    content: '发现一处待核对的时间线风险。'
+  })
+
+  assert.equal(result.isError, undefined)
+  assert.equal(saved[0].sourceType, 'audit-report')
+})

@@ -68,7 +68,7 @@ test('旧版成功运行记录会迁移为已扫描状态', () => {
   assert.equal(status.attemptCount, 1)
 })
 
-test('默认、失败和自定义范围都不会重复选择已完成章节', () => {
+test('默认、失败和自定义范围不会重复选择已完成章节，全书模式会显式重扫', () => {
   const statuses = [
     { chapterId: 'c1', status: 'success' },
     { chapterId: 'c2', status: 'skipped' },
@@ -91,4 +91,5 @@ test('默认、失败和自定义范围都不会重复选择已完成章节', ()
   assert.deepEqual(selectBackfillChapterStatuses(statuses, {
     mode: 'custom', chapterIds: ['c1', 'c4', 'c5']
   }).map((item) => item.chapterId), ['c4', 'c5'])
+  assert.deepEqual(selectBackfillChapterStatuses(statuses, { mode: 'all' }).map((item) => item.chapterId), ['c1', 'c2', 'c3', 'c4', 'c5'])
 })

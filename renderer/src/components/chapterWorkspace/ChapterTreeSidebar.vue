@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowLeft, ChevronDown, ChevronsDownUp, FilePlus, FileText, FolderPlus, GripVertical, ListChecks, MoreVertical, Plus, Search } from 'lucide-vue-next'
+import { ArrowLeft, BookCopy, ChevronDown, ChevronsDownUp, FilePlus, FileText, FolderPlus, GripVertical, ListChecks, MoreVertical, Plus, Search, WandSparkles } from 'lucide-vue-next'
 import { NButton, NCheckbox, NDropdown, NForm, NFormItem, NInput, NModal, NSelect, NSwitch, NTag, NTooltip, useDialog, useMessage } from 'naive-ui'
 import ChapterMetaDialog from './ChapterMetaDialog.vue'
+import ChapterSplitDialog from './ChapterSplitDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { formatVolumeLabel, normalizeVolumeWordTarget } from '@/features/workspace/outlineVolumes'
 import { getChapterCharacterCount, getPlainTextFromEditorContent } from '@/features/chapters/editorContent'
@@ -14,6 +15,7 @@ import { toIpcPayload } from '@/utils/ipcPayload'
 
 const emit = defineEmits<{
   navigate: []
+  'batch-draft': [chapterIds: string[]]
 }>()
 
 const appStore = useAppStore()
@@ -32,9 +34,15 @@ const volumeDragTargetPosition = ref<OutlineDropPosition | null>(null)
 
 const metaDialogVisible = ref(false)
 const metaDialogChapter = ref<ChapterDraft | null>(null)
+const splitDialogVisible = ref(false)
+const splitDialogChapter = ref<ChapterDraft | null>(null)
 const volumeDialogVisible = ref(false)
 const editingVolumeId = ref<string | null>(null)
 const createDialogVisible = ref(false)
+const outlineSyncVisible = ref(false)
+const outlineSyncSubmitting = ref(false)
+const draftSelectVisible = ref(false)
+const draftSelectedIds = ref<string[]>([])
 const batchDialogVisible = ref(false)
 const batchSubmitting = ref(false)
 const batchStatus = ref<ChapterDraft['status']>('final')
@@ -54,6 +62,7 @@ const volumeForm = reactive({
 
 const chapterMenuOptions: DropdownOption[] = [
   { key: 'edit', label: '编辑章节信息' },
+  { key: 'split', label: '拆分章节' },
   { key: 'export-txt', label: '导出 TXT' },
   { key: 'delete', label: '删除章节' }
 ]
@@ -100,6 +109,17 @@ const batchSyncEligibleIds = computed(() =>
     .filter((chapter) => getPlainTextFromEditorContent(chapter.content).trim().length >= 50)
     .map((chapter) => chapter.id)
 )
+
+const linkedOutlineIds = computed(() => new Set(
+  appStore.chapters.map((chapter) => chapter.outlineItemId).filter(Boolean)
+))
+const missingOutlineItems = computed(() =>
+  appStore.outlineItems.filter((item) => !linkedOutlineIds.value.has(item.id))
+)
+const draftSelectedSet = computed(() => new Set(draftSelectedIds.value))
+const emptyDraftCandidates = computed(() => appStore.chapters.filter((chapter) => (
+  getPlainTextFromEditorContent(chapter.content).trim().length === 0
+)))
 
 type ChapterTreeGroup = (typeof appStore.chapterVolumeGroups)[number]
 type ChapterTreeRow =
@@ -726,6 +746,52 @@ function submitCreateChapter(): void {
   emit('navigate')
 }
 
+function openOutlineSyncDialog(): void {
+  outlineSyncVisible.value = true
+}
+
+async function submitOutlineSync(): Promise<void> {
+  if (outlineSyncSubmitting.value || missingOutlineItems.value.length === 0) return
+  outlineSyncSubmitting.value = true
+  try {
+    const createdIds = appStore.createChaptersFromOutlineItems(missingOutlineItems.value)
+    await appStore.persistWorkspace()
+    if (appStore.persistenceError) {
+      message.error(`章节已建立，但保存失败：${appStore.persistenceError}`)
+      return
+    }
+    outlineSyncVisible.value = false
+    message.success(`已按大纲建立 ${createdIds.length} 个章节`)
+    emit('navigate')
+  } finally {
+    outlineSyncSubmitting.value = false
+  }
+}
+
+function openBatchDraftDialog(): void {
+  draftSelectedIds.value = emptyDraftCandidates.value.map((chapter) => chapter.id)
+  draftSelectVisible.value = true
+}
+
+function toggleDraftChapter(chapterId: string, checked: boolean): void {
+  const next = new Set(draftSelectedIds.value)
+  if (checked) next.add(chapterId)
+  else next.delete(chapterId)
+  draftSelectedIds.value = [...next]
+}
+
+function submitBatchDraft(): void {
+  const ids = appStore.chapters
+    .filter((chapter) => draftSelectedSet.value.has(chapter.id))
+    .map((chapter) => chapter.id)
+  if (ids.length === 0) {
+    message.warning('请至少选择一个空白章节')
+    return
+  }
+  draftSelectVisible.value = false
+  emit('batch-draft', ids)
+}
+
 function formatStatus(status: ChapterDraft['status']): string {
   switch (status) {
     case 'final': return '已定稿'
@@ -778,6 +844,11 @@ function handleMenuSelect(key: string | number, chapter: ChapterDraft): void {
     void handleExportChapterTxt(chapter)
     return
   }
+  if (key === 'split') {
+    splitDialogChapter.value = chapter
+    splitDialogVisible.value = true
+    return
+  }
   if (key === 'delete') {
     if (appStore.chapters.length <= 1) return
     dialog.warning({
@@ -822,6 +893,18 @@ function handleMenuSelect(key: string | number, chapter: ChapterDraft): void {
           <button class="icon-btn flex" @click="openCreateDialog()"><FilePlus :size="14" /></button>
         </template>
         新建章节
+      </n-tooltip>
+      <n-tooltip trigger="hover" placement="bottom">
+        <template #trigger>
+          <button class="icon-btn flex" @click="openOutlineSyncDialog"><BookCopy :size="14" /></button>
+        </template>
+        按大纲创建章节
+      </n-tooltip>
+      <n-tooltip trigger="hover" placement="bottom">
+        <template #trigger>
+          <button class="icon-btn flex" @click="openBatchDraftDialog"><WandSparkles :size="14" /></button>
+        </template>
+        批量生成初稿
       </n-tooltip>
       <n-tooltip trigger="hover" placement="bottom">
         <template #trigger>
@@ -946,6 +1029,90 @@ function handleMenuSelect(key: string | number, chapter: ChapterDraft): void {
       v-model:show="metaDialogVisible"
       :chapter="metaDialogChapter"
     />
+
+    <ChapterSplitDialog
+      v-model:show="splitDialogVisible"
+      :chapter="splitDialogChapter"
+    />
+
+    <NModal
+      v-model:show="outlineSyncVisible"
+      preset="card"
+      title="按大纲创建章节"
+      :style="{ width: 'min(680px, 94vw)' }"
+      :bordered="false"
+      :mask-closable="!outlineSyncSubmitting"
+      :closable="!outlineSyncSubmitting"
+    >
+      <div class="batch-status-layout">
+        <p class="batch-dialog-hint">
+          将为尚未关联章节的每个大纲节点建立一个空白章节；已经关联的节点不会重复创建，之后仍可手动拆成多章。
+        </p>
+        <div v-if="missingOutlineItems.length" class="batch-chapter-list arc-scrollbar">
+          <div v-for="item in missingOutlineItems" :key="item.id" class="outline-sync-row">
+            <FileText :size="14" />
+            <div>
+              <strong>{{ item.title }}</strong>
+              <span>{{ item.summary || item.conflict || '尚未填写剧情摘要' }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="empty-action-state">所有大纲节点都已经关联章节。</div>
+      </div>
+      <template #footer>
+        <div class="create-actions">
+          <NButton round strong :disabled="outlineSyncSubmitting" @click="outlineSyncVisible = false">取消</NButton>
+          <NButton
+            type="primary"
+            round
+            strong
+            :loading="outlineSyncSubmitting"
+            :disabled="missingOutlineItems.length === 0"
+            @click="submitOutlineSync"
+          >
+            创建 {{ missingOutlineItems.length }} 个章节
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="draftSelectVisible"
+      preset="card"
+      title="批量生成章节初稿"
+      :style="{ width: 'min(680px, 94vw)' }"
+      :bordered="false"
+    >
+      <div class="batch-status-layout">
+        <p class="batch-dialog-hint">
+          只列出正文为空的章节。确认后先检查统一的生成策略，每章会根据各自绑定的大纲自动建立创作卡并依次生成。
+        </p>
+        <div class="batch-quick-actions">
+          <NButton size="small" secondary @click="draftSelectedIds = emptyDraftCandidates.map((chapter) => chapter.id)">全选空白章节</NButton>
+          <NButton size="small" tertiary @click="draftSelectedIds = []">清空</NButton>
+          <span>{{ draftSelectedIds.length }} / {{ emptyDraftCandidates.length }} 章</span>
+        </div>
+        <div v-if="emptyDraftCandidates.length" class="batch-chapter-list arc-scrollbar">
+          <div v-for="chapter in emptyDraftCandidates" :key="chapter.id" class="batch-chapter-row">
+            <NCheckbox
+              :checked="draftSelectedSet.has(chapter.id)"
+              @update:checked="(checked) => toggleDraftChapter(chapter.id, checked)"
+            />
+            <span class="batch-chapter-title">{{ chapter.title }}</span>
+            <NTag size="tiny" :bordered="false">{{ chapter.wordTarget }}</NTag>
+          </div>
+        </div>
+        <div v-else class="empty-action-state">当前没有正文为空的章节。</div>
+      </div>
+      <template #footer>
+        <div class="create-actions">
+          <NButton round strong @click="draftSelectVisible = false">取消</NButton>
+          <NButton type="primary" round strong :disabled="draftSelectedIds.length === 0" @click="submitBatchDraft">
+            检查并开始生成
+          </NButton>
+        </div>
+      </template>
+    </NModal>
 
     <NModal
       v-model:show="batchDialogVisible"
@@ -1111,6 +1278,57 @@ function handleMenuSelect(key: string | number, chapter: ChapterDraft): void {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.batch-dialog-hint {
+  margin: 0;
+  color: var(--arc-text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.outline-sync-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--arc-border) 72%, transparent);
+}
+
+.outline-sync-row:last-child {
+  border-bottom: 0;
+}
+
+.outline-sync-row > svg {
+  margin-top: 3px;
+  color: var(--arc-primary);
+  flex-shrink: 0;
+}
+
+.outline-sync-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.outline-sync-row strong,
+.outline-sync-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-sync-row span,
+.empty-action-state {
+  color: var(--arc-text-hint);
+  font-size: 12px;
+}
+
+.empty-action-state {
+  padding: 28px;
+  text-align: center;
+  border: 1px dashed var(--arc-border);
+  border-radius: var(--arc-radius-md);
 }
 
 .batch-quick-actions {

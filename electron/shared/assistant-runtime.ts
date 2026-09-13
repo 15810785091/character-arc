@@ -283,6 +283,29 @@ export interface ContextBuildRequest {
   budgetTokens: number
 }
 
+/** 发送前展示给用户的本轮执行说明；仅做本地规划，不调用模型。 */
+export interface AssistantTurnPreview {
+  intent: 'chat' | 'audit' | 'correct' | 'ingest' | 'edit' | 'entity-edit'
+  intentLabel: string
+  contextMode: 'minimal' | 'targeted' | 'chapter'
+  contextBudgetTokens: number
+  contextUsedTokens: number
+  contextItems: Array<{
+    providerId: string
+    label: string
+    estimatedTokens: number
+    state: 'full' | 'compressed' | 'omitted'
+  }>
+  skillPolicy: SkillUsePolicy
+  skills: SkillExecutionReceiptItem[]
+  provider: string
+  model: string
+  estimatedModelCalls: string
+  maxModelCalls: number
+  writesToStaging: boolean
+  warnings: string[]
+}
+
 // ============================================================================
 // 工具权限矩阵
 // ============================================================================
@@ -322,6 +345,7 @@ export const ASSISTANT_IPC_CHANNELS = {
   SESSION_LOAD: 'characterarc:assistant:session:load',
   SESSION_RENAME: 'characterarc:assistant:session:rename',
   // Turn（用户发起一次输入）
+  TURN_PREVIEW: 'characterarc:assistant:turn:preview',
   TURN_SEND: 'characterarc:assistant:turn:send',
   TURN_CANCEL: 'characterarc:assistant:turn:cancel',
   TURN_TRUNCATE: 'characterarc:assistant:turn:truncate',
@@ -365,6 +389,12 @@ export interface TurnSendRequest {
   resumeOfTurnId?: string
   /** 当前对话/本轮覆盖后的 Skill 使用策略。缺省时采用项目默认值。 */
   skillPolicy?: SkillUsePolicy
+}
+
+/** 发送前预览允许尚未创建会话；此时 Runtime 使用临时会话计算计划。 */
+export interface TurnPreviewRequest extends Omit<TurnSendRequest, 'sessionId'> {
+  projectId: string
+  sessionId?: string
 }
 
 export interface TurnAttachment {

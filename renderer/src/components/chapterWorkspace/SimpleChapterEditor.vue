@@ -186,7 +186,13 @@ watch(
     if (!editor.value) return
     const normalized = ensureEditorHtmlContent(next || '')
     if (normalized === editor.value.getHTML()) return
+    if (recoveryTimer !== null) {
+      window.clearTimeout(recoveryTimer)
+      recoveryTimer = null
+    }
     editor.value.commands.setContent(normalized, { emitUpdate: false })
+    writeRecovery(props.chapterId, normalized)
+    emit('recovery-available', null)
   }
 )
 

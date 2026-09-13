@@ -2,6 +2,7 @@ import type { TaskHandler, PromptBuildInput } from './base'
 import { extractJsonObject } from './base'
 import type { AiTaskResult, ChapterAuditResult } from '../shared-types'
 import { formatProjectSkillsContext } from '../prompts/shared'
+import { buildChapterWordCountIssue } from '../../../shared/chapter-audit-policy'
 
 const VALID_SEVERITIES = new Set(['critical', 'warning', 'hint'])
 const CHAPTER_AUDIT_MAX_TOKENS = 26000
@@ -47,11 +48,11 @@ const handler: TaskHandler = {
 4. doNotDo 红线：是否触碰了备忘的红线
 5. 开头钩子：前 100 字是否有具体动作 / 对话 / 反差 / 信息冲击 / 未完成动作
 6. 章末钩子：是否有未完成动作或新信息把读者拉向下章（不是总结式收尾、鸡汤升华、廉价预告）
-7. 字数：实际字数是否在目标 ±10% 内
+7. 字数：只检查实际字数是否低于目标的 90%；超过目标不算审计问题，长章可由用户后续拆章
 8. 硬规则：是否出现破折号（——）、高疲劳词（冷笑/瞳孔骤缩/轰然炸裂/倒吸一口凉气/蝼蚁等）、章节内分隔符（---、#）
 
 issue 格式：
-- severity: "critical"（payoff 漏兑现 / endingChange 未发生 / 触碰红线 / 字数偏离目标范围）/"warning"（钩子弱）/"hint"（高疲劳词 / 句式单一）
+- severity: "critical"（payoff 漏兑现 / endingChange 未发生 / 触碰红线 / 字数低于目标下限）/"warning"（钩子弱）/"hint"（高疲劳词 / 句式单一）
 - category: "payoff" / "ending-change" / "hold" / "do-not-do" / "opening-hook" / "ending-hook" / "word-count" / "hard-rule"
 - ref: 备忘里对应的条目原文（payoff 类）或正文片段（其他类）
 - hint: 一句话改进建议
@@ -80,6 +81,8 @@ pass 判定：所有 critical issue 数 == 0 且 warning issue 数 <= 2 即 pass
         }
       })
       .filter((x): x is NonNullable<typeof x> => x !== null)
+      // 字数以程序测量结果为准；模型可能仍按旧习惯把长章判成问题。
+      .filter((issue) => issue.category !== 'word-count')
 
     const targetWordCount = Number(context?.targetWordCount ?? 0)
     const measuredWordCount = Number(context?.measuredWordCount ?? 0)
@@ -93,25 +96,14 @@ pass 判定：所有 critical issue 数 == 0 且 warning issue 数 <= 2 即 pass
       && Number.isFinite(wordCount)
       && wordCount > 0
     ) {
-      const min = Math.round(targetWordCount * 0.9)
-      const max = Math.round(targetWordCount * 1.1)
-      const hasWordCountIssue = issues.some((issue) => issue.category === 'word-count')
-      if ((wordCount < min || wordCount > max) && !hasWordCountIssue) {
-        issues.push({
-          severity: 'critical',
-          category: 'word-count',
-          ref: `程序测量 ${wordCount} 字，目标 ${targetWordCount} 字，建议范围 ${min}-${max} 字`,
-          hint: wordCount < min
-            ? `正文低于目标范围，需要补足约 ${min - wordCount} 字，并优先扩展关键冲突、行动和情绪转折。`
-            : `正文超过目标范围，需要压缩约 ${wordCount - max} 字，优先删减重复描写和低推进段落。`
-        })
-      }
+      const wordCountIssue = buildChapterWordCountIssue(targetWordCount, wordCount)
+      if (wordCountIssue) issues.push(wordCountIssue)
     }
     const criticalCount = issues.filter((issue) => issue.severity === 'critical').length
     const warningCount = issues.filter((issue) => issue.severity === 'warning').length
     return {
       audit: {
-        pass: criticalCount === 0 && warningCount <= 2 && Boolean(auditRaw.pass),
+        pass: criticalCount === 0 && warningCount <= 2,
         wordCount: Number.isFinite(wordCount) ? wordCount : 0,
         issues
       }

@@ -11,15 +11,10 @@ import {
 test('默认顺序保持当前工作台菜单排列', () => {
   assert.deepEqual(DEFAULT_WORKBENCH_MENU_ORDER, [
     'overview',
-    'characters',
-    'relations',
-    'world',
     'outline',
-    'threads',
+    'story-data',
     'chapters',
-    'inspiration',
-    'project-knowledge',
-    'global-assistant-v2'
+    'global-assistant'
   ])
 })
 
@@ -29,15 +24,17 @@ test('标准化会过滤无效和重复菜单并将缺失菜单追加到末尾',
     [
       'chapters',
       'overview',
-      'characters',
-      'relations',
-      'world',
       'outline',
-      'threads',
-      'inspiration',
-      'project-knowledge',
-      'global-assistant-v2'
+      'story-data',
+      'global-assistant'
     ]
+  )
+})
+
+test('旧版十项菜单升级后采用新的创作主线顺序', () => {
+  assert.deepEqual(
+    normalizeWorkbenchMenuOrder(['overview', 'outline', 'chapters', 'characters', 'global-assistant-v2']),
+    DEFAULT_WORKBENCH_MENU_ORDER
   )
 })
 

@@ -17,7 +17,7 @@ export type BackfillChapterStatus = {
 }
 
 export type BackfillSelection = {
-  mode?: 'pending' | 'failed' | 'custom'
+  mode?: 'pending' | 'failed' | 'custom' | 'all'
   chapterIds?: string[]
 }
 
@@ -28,6 +28,7 @@ export function selectBackfillChapterStatuses(
   const mode = selection.mode ?? 'pending'
   const selectedIds = new Set((selection.chapterIds ?? []).map(String))
   return statuses.filter((status) => {
+    if (mode === 'all') return true
     if (mode === 'failed') {
       return status.status === 'failed' || status.status === 'running'
     }

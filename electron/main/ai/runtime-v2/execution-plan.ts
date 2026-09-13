@@ -12,7 +12,7 @@
  */
 
 import type { AiTaskName, AiTaskPayload, AppSettings } from '../shared-types'
-import type { AssistantSession, SurfaceDefinition, TurnSendRequest } from '@shared/assistant-runtime'
+import type { AssistantSession, AssistantTurnPreview, ContextProviderId, SurfaceDefinition, TurnSendRequest } from '@shared/assistant-runtime'
 import type { Tool } from '../agent/tools/types'
 import { buildSkillIndex } from '../agent/system-prompt'
 import { createChapterTools } from '../agent/tools/chapter-tools'
@@ -46,6 +46,40 @@ const MINIMAL_CONTEXT_BUDGET_TOKENS = 32000
 const SELECTION_CONTEXT_BUDGET_TOKENS = 64000
 const TARGETED_CONTEXT_BUDGET_TOKENS = 32000
 const CHAPTER_CONTEXT_BUDGET_TOKENS = 56000
+
+const INTENT_LABELS: Record<AssistantTurnPreview['intent'], string> = {
+  chat: '讨论与建议',
+  audit: '一致性审计',
+  correct: '修正问题',
+  ingest: '录入资料',
+  edit: '创作或修改正文',
+  'entity-edit': '修改项目资料'
+}
+
+const CONTEXT_LABELS: Partial<Record<ContextProviderId, string>> = {
+  'project-brief': '项目基本信息',
+  'project-digest': 'AI 项目小结',
+  'current-chapter': '当前章节',
+  selection: '当前选区',
+  'recent-messages': '最近对话',
+  worldview: '世界观',
+  characters: '人物资料',
+  organizations: '关系与势力',
+  'character-relationships': '人物关系',
+  outline: '剧情大纲',
+  'plot-threads': '伏笔线索',
+  constraints: '项目硬约束',
+  inspiration: '灵感资料',
+  knowledge: '知识库',
+  'workflow-documents': '创作记忆',
+  'skill-index': 'Skill 索引'
+}
+
+function estimateModelCalls(plan: AssistantRuntimePlan): string {
+  if (plan.requiresBatching) return '通常 2–6 轮'
+  if (plan.intent === 'edit' || plan.intent === 'entity-edit' || plan.intent === 'correct') return '通常 2–4 轮'
+  return '通常 1–3 轮'
+}
 
 export interface CreateExecutionPlannerDeps {
   snapshot: SnapshotAccessor
@@ -228,6 +262,64 @@ export function createExecutionPlanner(
       Math.max(estimateTokens(systemPrompt) + 6000, 16000)
     )
 
+    const skillPlan = {
+      mode: skillPolicy.mode,
+      items: matchedSkillDefs.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        state: (skillPolicy.mode === 'only' || skill.manifest.required) ? 'injected' as const : 'candidate' as const
+      }))
+    }
+    const contextItems: AssistantTurnPreview['contextItems'] = contextResult.slices.map((slice) => {
+      const providerId = String(slice.providerId)
+      const state = contextResult.compressedProviderIds.includes(providerId)
+        ? 'compressed' as const
+        : contextResult.truncatedProviderIds.includes(providerId)
+          ? 'omitted' as const
+          : 'full' as const
+      return {
+        providerId,
+        label: CONTEXT_LABELS[slice.providerId as ContextProviderId] ?? slice.heading,
+        estimatedTokens: slice.estimatedTokens,
+        state
+      }
+    })
+    for (const providerId of contextResult.truncatedProviderIds) {
+      if (contextItems.some((item) => item.providerId === providerId)) continue
+      contextItems.push({
+        providerId,
+        label: CONTEXT_LABELS[providerId as ContextProviderId] ?? providerId,
+        estimatedTokens: 0,
+        state: 'omitted'
+      })
+    }
+    const previewWarnings: string[] = []
+    if (contextResult.compressedProviderIds.length > 0) {
+      previewWarnings.push(`有 ${contextResult.compressedProviderIds.length} 类上下文因篇幅较长被压缩，AI 可按需读取原文。`)
+    }
+    if (contextResult.truncatedProviderIds.length > 0) {
+      previewWarnings.push(`有 ${contextResult.truncatedProviderIds.length} 类上下文未直接注入，AI 将通过工具按需查询。`)
+    }
+    if (skillPolicy.mode === 'auto' && skillPlan.items.length === 0) {
+      previewWarnings.push('自动模式下本轮没有匹配到可用 Skill。')
+    }
+    const preview: AssistantTurnPreview = {
+      intent: runtimePlan.intent,
+      intentLabel: INTENT_LABELS[runtimePlan.intent],
+      contextMode: runtimePlan.contextMode,
+      contextBudgetTokens,
+      contextUsedTokens: contextResult.usedTokens,
+      contextItems,
+      skillPolicy: { mode: skillPolicy.mode, skillIds: [...skillPolicy.skillIds] },
+      skills: skillPlan.items,
+      provider: settings.provider,
+      model: settings.model,
+      estimatedModelCalls: estimateModelCalls(runtimePlan),
+      maxModelCalls: surface.maxSteps,
+      writesToStaging: runtimePlan.intent !== 'chat' && !surface.autoCommit,
+      warnings: previewWarnings
+    }
+
     return {
       systemPrompt,
       tools: toolFactory,
@@ -235,14 +327,8 @@ export function createExecutionPlanner(
       maxOutputTokens,
       runtimePlan,
       evidenceLedger,
-      skillPlan: {
-        mode: skillPolicy.mode,
-        items: matchedSkillDefs.map((skill) => ({
-          id: skill.id,
-          name: skill.name,
-          state: (skillPolicy.mode === 'only' || skill.manifest.required) ? 'injected' as const : 'candidate' as const
-        }))
-      }
+      skillPlan,
+      preview
     }
   }
 }

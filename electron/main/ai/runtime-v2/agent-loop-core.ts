@@ -326,7 +326,7 @@ export class AgentLoopCore {
       } else {
         status = 'error'
         errorMessage = this.isToolUseNotSupportedError(e)
-          ? '当前模型不支持工具调用（tool_use），无法驱动全局助手 v2 的读取与暂存流程。请在设置中切换到支持工具调用的模型（如 Claude / GPT 系列）后重试。'
+          ? '当前模型不支持工具调用（tool_use），无法驱动全局助手的读取与暂存流程。请在设置中切换到支持工具调用的模型（如 Claude / GPT 系列）后重试。'
           : formatUnknownError(e, 'AI Agent 调用失败')
         this.dispatch(sessionId, turnId, {
           kind: 'error',

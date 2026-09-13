@@ -3,10 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const components = [
-  '../../components/assistantV2/AssistantMessages.vue',
-  '../../components/chapterWorkspace/ChapterAiMessages.vue',
-  '../../components/GlobalAssistantPanel.vue',
-  '../../components/GlobalAssistantPage.vue'
+  '../../components/assistantV2/AssistantMessages.vue'
 ]
 
 for (const relativePath of components) {

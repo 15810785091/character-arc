@@ -231,6 +231,104 @@ declare global {
     updatedAt: string
   }
 
+  type CharacterArcForeshadowing = {
+    foreshadowingId: string
+    type: string
+    description: string
+    status: 'active' | 'advanced' | 'resolved' | 'abandoned'
+    plantedChapter: number
+    plantedMethod: string
+    payoffChapter: number | null
+    resolvedChapter: number | null
+    clues: Array<{ chapter: number; clue: string; method?: string }>
+    connections: string[]
+    statusManagedBy: 'auto' | 'manual'
+  }
+
+  type CharacterArcRelationship = {
+    relationshipId: string
+    participantA: string
+    participantB: string
+    currentStatus: string
+    tensionPoints: string[]
+    trajectory: string
+    lastInteractionChapter: number | null
+    lifecycleStatus: 'active' | 'dormant' | 'archived'
+    lifecycleManagedBy: 'auto' | 'manual'
+    history: Array<{
+      id: string
+      chapterIndex: number | null
+      fromStatus: string
+      toStatus: string
+      pivotEvent: string
+      tensionsAdded: string[]
+      tensionsResolved: string[]
+      lifecycleFrom: 'active' | 'dormant' | 'archived' | ''
+      lifecycleTo: 'active' | 'dormant' | 'archived' | ''
+      source: 'ai' | 'automatic' | 'manual'
+      createdAt: string
+    }>
+  }
+
+  type CharacterArcEntityCandidate = {
+    id: string
+    kind: 'character' | 'organization'
+    name: string
+    aliases: string[]
+    roleOrType: string
+    description: string
+    status: 'observing' | 'pending' | 'confirmed' | 'ignored'
+    confidence: number
+    chapterCount: number
+    evidence: Array<{ chapterIndex: number; quote: string }>
+    hasDialogue: boolean
+    plotImpact: boolean
+    explicitImportance: boolean
+    linkedEntityId: string
+    createdAt: string
+    updatedAt: string
+  }
+
+  type CharacterArcStoryState = {
+    characterStates: Array<{
+      characterId: string
+      chapterIndex: number
+      location: string
+      physicalState: string
+      mentalState: string
+      arcStage: string
+      powerLevel: string
+      knowledge: string[]
+      inventory: string[]
+      goals: string[]
+    }>
+    activeForeshadowing: CharacterArcForeshadowing[]
+    allForeshadowing: CharacterArcForeshadowing[]
+    relationships: CharacterArcRelationship[]
+    allRelationships: CharacterArcRelationship[]
+    entityCandidates: CharacterArcEntityCandidate[]
+    recentTimeline: Array<{
+      chapterIndex: number
+      storyDate: string
+      events: string[]
+      worldStateChanges: string[]
+    }>
+    worldRules: Array<{
+      ruleId: string
+      ruleContent: string
+      establishedChapter: number
+      exceptions: string[]
+      mustComply: boolean
+    }>
+    activeClocks: Array<{
+      clockId: string
+      eventDescription: string
+      deadlineChapter: number | null
+      status: 'active' | 'expired' | 'resolved'
+      urgency: string
+    }>
+  }
+
   interface Window {
     characterArc: {
       platform: string
@@ -324,7 +422,7 @@ declare global {
         settings: import('@/types/app').AppSettings
         projectId: string
         selection?: {
-          mode?: 'pending' | 'failed' | 'custom'
+          mode?: 'pending' | 'failed' | 'custom' | 'all'
           chapterIds?: string[]
         }
       }) => Promise<{
@@ -355,61 +453,12 @@ declare global {
       onBackfillStateProgress: (callback: (payload: CharacterArcBackfillStateProgressPayload) => void) => () => void
       readStoryState: (projectId: string) => Promise<{
         success: boolean
-        result?: {
-          characterStates: Array<{
-            characterId: string
-            chapterIndex: number
-            location: string
-            physicalState: string
-            mentalState: string
-            arcStage: string
-            powerLevel: string
-            knowledge: string[]
-            inventory: string[]
-            goals: string[]
-          }>
-          activeForeshadowing: Array<{
-            foreshadowingId: string
-            type: string
-            description: string
-            status: 'active' | 'advanced' | 'resolved' | 'abandoned'
-            plantedChapter: number
-            plantedMethod: string
-            payoffChapter: number | null
-            resolvedChapter: number | null
-            clues: Array<{ chapter: number; clue: string; method?: string }>
-            connections: string[]
-          }>
-          relationships: Array<{
-            relationshipId: string
-            participantA: string
-            participantB: string
-            currentStatus: string
-            tensionPoints: string[]
-            trajectory: string
-            lastInteractionChapter: number | null
-          }>
-          recentTimeline: Array<{
-            chapterIndex: number
-            storyDate: string
-            events: string[]
-            worldStateChanges: string[]
-          }>
-          worldRules: Array<{
-            ruleId: string
-            ruleContent: string
-            establishedChapter: number
-            exceptions: string[]
-            mustComply: boolean
-          }>
-          activeClocks: Array<{
-            clockId: string
-            eventDescription: string
-            deadlineChapter: number | null
-            status: 'active' | 'expired' | 'resolved'
-            urgency: string
-          }>
-        }
+        result?: CharacterArcStoryState
+        error?: string
+      }>
+      updateStoryStateLifecycle: (payload: unknown) => Promise<{
+        success: boolean
+        result?: CharacterArcStoryState
         error?: string
       }>
       testAiConnection: (settings: unknown) => Promise<{
@@ -739,6 +788,8 @@ declare global {
           events: import('@shared/assistant-runtime').PersistedTurnEvent[]
         }>
         sessionRename: (payload: { sessionId: string; title: string }) => Promise<{ ok: boolean }>
+        turnPreview: (payload: import('@shared/assistant-runtime').TurnPreviewRequest) =>
+          Promise<import('@shared/assistant-runtime').AssistantTurnPreview>
         turnSend: (payload: import('@shared/assistant-runtime').TurnSendRequest) =>
           Promise<{ turnId: string; finalText: string; status: string; error?: string }>
         turnCancel: (payload: import('@shared/assistant-runtime').TurnCancelRequest) =>

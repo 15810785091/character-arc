@@ -1,14 +1,9 @@
 export const WORKBENCH_MENU_DEFINITIONS = [
   { id: 'overview', label: '作品概览' },
-  { id: 'characters', label: '角色图鉴' },
-  { id: 'relations', label: '关系组织' },
-  { id: 'world', label: '世界观设定' },
   { id: 'outline', label: '剧情大纲' },
-  { id: 'threads', label: '剧情线索' },
+  { id: 'story-data', label: '故事资料' },
   { id: 'chapters', label: '章节创作' },
-  { id: 'inspiration', label: '灵感模块' },
-  { id: 'project-knowledge', label: '项目知识库' },
-  { id: 'global-assistant-v2', label: '全局助手 v2' }
+  { id: 'global-assistant', label: '全局助手' },
 ] as const
 
 export type WorkbenchMenuId = typeof WORKBENCH_MENU_DEFINITIONS[number]['id']
@@ -19,8 +14,23 @@ export const DEFAULT_WORKBENCH_MENU_ORDER: WorkbenchMenuId[] = WORKBENCH_MENU_DE
 )
 
 const workbenchMenuIdSet = new Set<string>(DEFAULT_WORKBENCH_MENU_ORDER)
+const legacyWorkbenchMenuIdSet = new Set([
+  'characters',
+  'relations',
+  'world',
+  'threads',
+  'inspiration',
+  'project-knowledge',
+  'global-assistant-v2'
+])
 
 export function normalizeWorkbenchMenuOrder(value?: readonly string[] | null): WorkbenchMenuId[] {
+  // 旧版十项菜单无法一一映射到新的四项结构；首次升级时使用新默认顺序，
+  // 避免“故事资料”被简单追加到章节创作之后。
+  if (Array.isArray(value) && value.some((id) => legacyWorkbenchMenuIdSet.has(String(id)))) {
+    return [...DEFAULT_WORKBENCH_MENU_ORDER]
+  }
+
   const result: WorkbenchMenuId[] = []
   const seen = new Set<string>()
 

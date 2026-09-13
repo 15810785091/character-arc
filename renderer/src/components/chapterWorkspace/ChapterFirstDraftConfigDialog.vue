@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { CircleHelp } from 'lucide-vue-next'
-import { NButton, NCheckbox, NCheckboxGroup, NInputNumber, NInput, NModal, NSelect, NSwitch, NTag, NTooltip } from 'naive-ui'
+import { CircleHelp, Settings2 } from 'lucide-vue-next'
+import { NAlert, NButton, NCheckbox, NCheckboxGroup, NInputNumber, NInput, NModal, NSelect, NSwitch, NTag, NTooltip } from 'naive-ui'
 import { buildChapterReferencePreview, buildOutlineItemContext } from '@/features/ai/chapterAssistantContext'
 import { getChapterPreviewText, getPlainTextFromEditorContent } from '@/features/chapters/editorContent'
 import { useAppStore } from '@/stores/app'
@@ -9,15 +9,24 @@ import { parseChapterWordTarget } from '@/features/chapters/wordTarget'
 import type { NovelWorkflowStageId, ProjectSkillItem } from '@/types/app'
 import {
   createDefaultFirstDraftSteps,
+  createFirstDraftStepsForStrategy,
+  findChapterWritingContract,
+  findFirstDraftCheckpoint,
   FIRST_DRAFT_STEP_DEFINITIONS,
+  getFirstDraftConfigSignature,
+  normalizeChapterWritingContract,
+  type ChapterWritingContract,
   type FirstDraftConfig,
   type FirstDraftFailurePolicy,
   type FirstDraftSkillMode,
+  type FirstDraftStrategy,
   type FirstDraftStepConfig,
   type FirstDraftStepId
 } from './useChapterFirstDraft'
 
-const props = defineProps<{ show: boolean }>()
+const props = withDefaults(defineProps<{ show: boolean; batchCount?: number }>(), {
+  batchCount: 0
+})
 const emit = defineEmits<{
   (e: 'confirm', config: FirstDraftConfig): void
   (e: 'cancel'): void
@@ -31,12 +40,24 @@ const project = computed(() => appStore.currentProject)
 const targetWordCount = ref(3000)
 const selectedRefIds = ref<string[]>([])
 const userPrompt = ref('')
+const strategy = ref<FirstDraftStrategy>('balanced')
+const showAdvanced = ref(false)
 const expandedStepId = ref<FirstDraftStepId | null>('draft')
 const discoveredProjectSkills = ref<ProjectSkillItem[]>([])
 const hasScannedProjectSkills = ref(false)
 const isLoadingProjectSkills = ref(false)
 const projectSkillsLoadError = ref('')
 const steps = reactive<Record<FirstDraftStepId, FirstDraftStepConfig>>(createDefaultFirstDraftSteps())
+const contractForm = reactive({
+  goal: '',
+  pov: '',
+  timeAndPlace: '',
+  conflict: '',
+  mustHappen: '',
+  forbidden: '',
+  endingHook: ''
+})
+const resumeFromCheckpoint = ref(false)
 
 const referenceWorks = computed(() => appStore.referenceWorks)
 const projectSkills = computed(() => {
@@ -118,6 +139,35 @@ const skillModeOptions: Array<{ label: string; value: FirstDraftSkillMode }> = [
   { label: '不使用', value: 'off' }
 ]
 
+const strategyOptions: Array<{ id: FirstDraftStrategy; label: string; calls: string; description: string }> = [
+  { id: 'quick', label: '快速', calls: '约 1 次 AI', description: '直接生成正文，适合试写和低成本迭代。' },
+  { id: 'balanced', label: '平衡', calls: '约 2 次 AI', description: '先生成写作备忘再写正文，本地检查字数与重复。' },
+  { id: 'strict', label: '严格', calls: '约 3–4 次 AI', description: '增加 AI 深度审计，发现关键问题时才自动修复。' }
+]
+
+const stepLabelById = new Map(FIRST_DRAFT_STEP_DEFINITIONS.map((step) => [step.id, step.label]))
+
+function formatCheckpointDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '上次' : date.toLocaleString('zh-CN')
+}
+
+const draftSkillOptions = computed(() => selectableProjectSkills.value.map((skill) => ({
+  label: `${skill.name} · ${getSkillCategoryLabel(skill)}`,
+  value: skill.id
+})))
+
+function selectStrategy(value: FirstDraftStrategy): void {
+  const currentDraftPolicy = {
+    skillMode: steps.draft.skillMode,
+    skillIds: [...steps.draft.skillIds],
+    userPrompt: steps.draft.userPrompt
+  }
+  strategy.value = value
+  Object.assign(steps, createFirstDraftStepsForStrategy(value))
+  Object.assign(steps.draft, currentDraftPolicy)
+}
+
 const activeStep = computed(() =>
   FIRST_DRAFT_STEP_DEFINITIONS.find((step) => step.id === expandedStepId.value) ?? FIRST_DRAFT_STEP_DEFINITIONS[1]
 )
@@ -136,6 +186,82 @@ const currentOutlineItem = computed(() => {
     ? volumeOutlineItems.find((item) => item.id === currentChapter.outlineItemId) ?? null
     : volumeOutlineItems.find((item) => item.title.trim() === currentChapter.title.trim()) ?? null
 })
+
+const savedCheckpoint = computed(() => {
+  const chapterId = chapter.value?.id
+  return chapterId ? findFirstDraftCheckpoint(appStore.knowledgeDocuments, chapterId) : null
+})
+
+function splitContractLines(value: string): string[] {
+  return value
+    .split(/\r?\n|；/)
+    .map((item) => item.replace(/^[-•]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 12)
+}
+
+function readContractForm(): ChapterWritingContract {
+  return normalizeChapterWritingContract({
+    goal: contractForm.goal,
+    pov: contractForm.pov,
+    timeAndPlace: contractForm.timeAndPlace,
+    conflict: contractForm.conflict,
+    mustHappen: splitContractLines(contractForm.mustHappen),
+    forbidden: splitContractLines(contractForm.forbidden),
+    endingHook: contractForm.endingHook
+  })
+}
+
+function hydrateContractForm(contract: ChapterWritingContract): void {
+  contractForm.goal = contract.goal
+  contractForm.pov = contract.pov
+  contractForm.timeAndPlace = contract.timeAndPlace
+  contractForm.conflict = contract.conflict
+  contractForm.mustHappen = contract.mustHappen.join('\n')
+  contractForm.forbidden = contract.forbidden.join('\n')
+  contractForm.endingHook = contract.endingHook
+}
+
+function buildCurrentConfig(): FirstDraftConfig {
+  const selectableSkillIds = new Set(selectableProjectSkills.value.map((skill) => skill.id))
+  return {
+    strategy: strategy.value,
+    targetWordCount: targetWordCount.value,
+    selectedReferenceWorkIds: selectedRefIds.value,
+    userPrompt: userPrompt.value.trim(),
+    chapterContract: readContractForm(),
+    resumeFromCheckpoint: resumeFromCheckpoint.value,
+    steps: FIRST_DRAFT_STEP_DEFINITIONS.reduce((acc, item) => {
+      acc[item.id] = {
+        ...steps[item.id],
+        id: item.id,
+        enabled: item.required ? true : steps[item.id].enabled,
+        skillMode: steps[item.id].skillMode,
+        skillIds: steps[item.id].skillIds.filter((skillId) => selectableSkillIds.has(skillId)),
+        userPrompt: steps[item.id].userPrompt.trim()
+      }
+      return acc
+    }, {} as Record<FirstDraftStepId, FirstDraftStepConfig>)
+  }
+}
+
+const checkpointCompatible = computed(() => {
+  const checkpoint = savedCheckpoint.value
+  if (!checkpoint) return false
+  return checkpoint.configSignature === getFirstDraftConfigSignature(buildCurrentConfig())
+})
+
+function hydrateFromConfig(config: FirstDraftConfig): void {
+  strategy.value = config.strategy
+  targetWordCount.value = config.targetWordCount
+  selectedRefIds.value = [...config.selectedReferenceWorkIds]
+  userPrompt.value = config.userPrompt
+  hydrateContractForm(normalizeChapterWritingContract(config.chapterContract))
+  Object.assign(steps, createFirstDraftStepsForStrategy(config.strategy))
+  for (const definition of FIRST_DRAFT_STEP_DEFINITIONS) {
+    if (config.steps[definition.id]) Object.assign(steps[definition.id], config.steps[definition.id])
+  }
+}
 
 const contextPreview = computed(() => {
   const currentChapter = chapter.value
@@ -282,8 +408,31 @@ watch(() => props.show, (visible) => {
   targetWordCount.value = parseChapterWordTarget(chapter.value?.wordTarget) || 3000
   selectedRefIds.value = [...(project.value?.selectedReferenceWorkIds ?? [])]
   userPrompt.value = ''
+  strategy.value = 'balanced'
+  showAdvanced.value = false
   expandedStepId.value = 'draft'
-  Object.assign(steps, createDefaultFirstDraftSteps())
+  Object.assign(steps, createFirstDraftStepsForStrategy('balanced'))
+  const outline = currentOutlineItem.value
+  const defaultContract = findChapterWritingContract(appStore.knowledgeDocuments, chapter.value?.id ?? '')
+    ?? normalizeChapterWritingContract({
+    goal: chapter.value?.summary || outline?.summary || '',
+    pov: (outline?.relatedCharacterIds ?? [])
+      .map((id) => appStore.characters.find((item) => item.id === id)?.name ?? '')
+      .filter(Boolean)
+      .join('、'),
+    timeAndPlace: '',
+    conflict: outline?.conflict ?? '',
+    mustHappen: [chapter.value?.summary || outline?.summary || ''].filter(Boolean),
+    forbidden: [],
+    endingHook: ''
+    })
+  hydrateContractForm(defaultContract)
+  resumeFromCheckpoint.value = false
+  const checkpoint = savedCheckpoint.value
+  if (checkpoint) {
+    hydrateFromConfig(checkpoint.config)
+    resumeFromCheckpoint.value = true
+  }
   void scanAvailableProjectSkills()
 })
 
@@ -297,23 +446,7 @@ function toggleExpanded(stepId: FirstDraftStepId): void {
 }
 
 function handleConfirm(): void {
-  const selectableSkillIds = new Set(selectableProjectSkills.value.map((skill) => skill.id))
-  emit('confirm', {
-    targetWordCount: targetWordCount.value,
-    selectedReferenceWorkIds: selectedRefIds.value,
-    userPrompt: userPrompt.value.trim(),
-    steps: FIRST_DRAFT_STEP_DEFINITIONS.reduce((acc, item) => {
-      acc[item.id] = {
-        ...steps[item.id],
-        id: item.id,
-        enabled: item.required ? true : steps[item.id].enabled,
-        skillMode: steps[item.id].skillMode,
-        skillIds: steps[item.id].skillIds.filter((skillId) => selectableSkillIds.has(skillId)),
-        userPrompt: steps[item.id].userPrompt.trim()
-      }
-      return acc
-    }, {} as Record<FirstDraftStepId, FirstDraftStepConfig>)
-  })
+  emit('confirm', buildCurrentConfig())
 }
 </script>
 
@@ -321,7 +454,7 @@ function handleConfirm(): void {
   <n-modal
     :show="show"
     preset="card"
-    title="生成初稿配置"
+    :title="batchCount > 0 ? `批量初稿配置（${batchCount} 章）` : '生成初稿配置'"
     :style="{ width: 'min(920px, 94vw)' }"
     :mask-closable="true"
     :closable="true"
@@ -330,6 +463,77 @@ function handleConfirm(): void {
     @mask-click="$emit('cancel')"
   >
     <div class="config-form arc-scrollbar">
+      <n-alert v-if="batchCount > 0" type="info" :bordered="false">
+        当前展示首章创作卡。生成策略、技能和参考作品会用于整批章节；其余章节的目标、冲突和字数会从各自绑定的大纲自动生成。
+      </n-alert>
+      <n-alert v-if="savedCheckpoint" type="info" :bordered="false" class="checkpoint-alert">
+        <div class="checkpoint-copy">
+          <strong>发现 {{ formatCheckpointDate(savedCheckpoint.updatedAt) }} 保存的未完成流程</strong>
+          <span>已完成：{{ savedCheckpoint.completedSteps.length ? savedCheckpoint.completedSteps.map((id) => stepLabelById.get(id) ?? id).join('、') : '准备阶段' }}。</span>
+          <span v-if="savedCheckpoint.skippedSteps?.length">已跳过：{{ savedCheckpoint.skippedSteps.map((id) => stepLabelById.get(id) ?? id).join('、') }}。</span>
+          <n-checkbox v-model:checked="resumeFromCheckpoint" :disabled="!checkpointCompatible">
+            {{ checkpointCompatible ? '从上次检查点继续，跳过已完成步骤' : '配置已变化，将作为新流程开始' }}
+          </n-checkbox>
+        </div>
+      </n-alert>
+
+      <section class="config-section strategy-panel">
+        <div>
+          <label class="section-label">生成策略</label>
+          <p class="section-hint">平衡模式默认兼顾质量和额度；预估次数不包含模型内部工具调用。</p>
+        </div>
+        <div class="strategy-grid">
+          <button
+            v-for="item in strategyOptions"
+            :key="item.id"
+            type="button"
+            class="strategy-card"
+            :class="{ active: strategy === item.id }"
+            @click="selectStrategy(item.id)"
+          >
+            <span class="strategy-title"><strong>{{ item.label }}</strong><em>{{ item.calls }}</em></span>
+            <span>{{ item.description }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="config-section chapter-contract-panel">
+        <div>
+          <label class="section-label">章节创作卡</label>
+          <p class="section-hint">这是所有模型共同遵守的本章硬契约。确认生成后会随项目保存，失败时也能继续。</p>
+        </div>
+        <div class="contract-grid">
+          <label class="contract-field contract-field-wide">
+            <span>本章目标</span>
+            <n-input v-model:value="contractForm.goal" size="small" placeholder="这一章必须推进或完成什么" />
+          </label>
+          <label class="contract-field">
+            <span>视角人物</span>
+            <n-input v-model:value="contractForm.pov" size="small" placeholder="如：陆烬，限知第三人称" />
+          </label>
+          <label class="contract-field">
+            <span>时间与地点</span>
+            <n-input v-model:value="contractForm.timeAndPlace" size="small" placeholder="如：冬训第二天清晨，学院后山" />
+          </label>
+          <label class="contract-field contract-field-wide">
+            <span>核心冲突</span>
+            <n-input v-model:value="contractForm.conflict" size="small" placeholder="没有明确冲突可以留空" />
+          </label>
+          <label class="contract-field">
+            <span>必须发生（每行一项）</span>
+            <n-input v-model:value="contractForm.mustHappen" type="textarea" :rows="3" size="small" placeholder="关键动作、揭示或兑现" />
+          </label>
+          <label class="contract-field">
+            <span>禁止出现（每行一项）</span>
+            <n-input v-model:value="contractForm.forbidden" type="textarea" :rows="3" size="small" placeholder="不能提前揭露或不能写的内容" />
+          </label>
+          <label class="contract-field contract-field-wide">
+            <span>结尾钩子</span>
+            <n-input v-model:value="contractForm.endingHook" size="small" placeholder="章尾必须发生的变化或未完成动作" />
+          </label>
+        </div>
+      </section>
+
       <div class="overview-grid">
         <section class="config-section compact-panel">
           <div>
@@ -357,6 +561,36 @@ function handleConfirm(): void {
         </section>
       </div>
 
+      <section class="config-section primary-skill-panel">
+        <div class="section-title-row">
+          <div>
+            <label class="section-label">正文 Skill</label>
+            <p class="section-hint">这里只控制正文生成；选择“仅使用”时可以多选。</p>
+          </div>
+          <n-button size="tiny" quaternary @click="showAdvanced = !showAdvanced">
+            <template #icon><Settings2 :size="13" /></template>
+            {{ showAdvanced ? '收起高级设置' : '高级设置' }}
+          </n-button>
+        </div>
+        <div class="primary-skill-fields">
+          <n-select v-model:value="steps.draft.skillMode" size="small" :options="skillModeOptions" />
+          <n-select
+            v-if="steps.draft.skillMode === 'only'"
+            v-model:value="steps.draft.skillIds"
+            multiple
+            filterable
+            size="small"
+            placeholder="选择一个或多个正文 Skill"
+            :options="draftSkillOptions"
+            :loading="isLoadingProjectSkills"
+          />
+        </div>
+        <n-alert v-if="steps.draft.skillMode === 'only' && steps.draft.skillIds.length === 0" type="warning" :bordered="false">
+          “仅使用”模式至少要选择一个 Skill。
+        </n-alert>
+      </section>
+
+      <template v-if="showAdvanced">
       <section class="config-section context-preview-panel">
         <div class="section-title-row">
           <div>
@@ -615,6 +849,7 @@ function handleConfirm(): void {
           </section>
         </div>
       </section>
+      </template>
     </div>
 
     <template #footer>
@@ -650,6 +885,9 @@ function handleConfirm(): void {
 
 .compact-panel,
 .prompt-panel,
+.strategy-panel,
+.chapter-contract-panel,
+.primary-skill-panel,
 .reference-panel,
 .context-preview-panel,
 .workflow-section {
@@ -657,6 +895,103 @@ function handleConfirm(): void {
   border-radius: 8px;
   background: var(--arc-bg-surface, #fff);
   padding: 12px;
+}
+
+.strategy-panel,
+.chapter-contract-panel,
+.primary-skill-panel {
+  gap: 11px;
+}
+
+.checkpoint-alert {
+  flex: 0 0 auto;
+}
+
+.checkpoint-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+
+.checkpoint-copy > span {
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+}
+
+.contract-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.contract-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.contract-field > span {
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.contract-field-wide {
+  grid-column: 1 / -1;
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategy-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--arc-border, rgba(120, 120, 120, 0.22));
+  border-radius: 8px;
+  background: var(--arc-bg-body, #f8f8f8);
+  color: var(--arc-text-secondary, #666);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.strategy-card.active {
+  border-color: color-mix(in srgb, var(--arc-primary) 55%, var(--arc-border));
+  background: var(--arc-primary-soft);
+  color: var(--arc-text-primary);
+  box-shadow: inset 3px 0 0 var(--arc-primary);
+}
+
+.strategy-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.strategy-title em {
+  color: var(--arc-text-hint);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.strategy-card > span:last-child {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.primary-skill-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.5fr) minmax(0, 1.5fr);
+  gap: 8px;
 }
 
 .compact-panel {
@@ -1142,6 +1477,7 @@ function handleConfirm(): void {
 
 @media (max-width: 640px) {
   .overview-grid,
+  .contract-grid,
   .context-preview-grid,
   .workflow-layout {
     grid-template-columns: 1fr;

@@ -4,7 +4,9 @@ import { storeToRefs } from 'pinia'
 import { useMessage } from 'naive-ui'
 import {
   History,
+  Maximize2,
   MessageSquareText,
+  Minimize2,
   Plus,
   Sparkles,
   SquareStack,
@@ -21,10 +23,12 @@ import StagedChangesView from './StagedChangesView.vue'
 
 const props = defineProps<{
   activeViewLabel?: string
+  expanded?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
+  toggleExpand: []
 }>()
 
 const appStore = useAppStore()
@@ -108,6 +112,10 @@ function sendWithMode(): void {
   })
 }
 
+function previewWithMode(): void {
+  void assistant.preview({ intentHint: `global-assistant-v2:${activeMode.value}` })
+}
+
 function notifyTruncate(result: TurnTruncateResult, action: '撤回' | '重新分叉'): void {
   if (result.keptCommitted > 0) {
     message.warning(`${action}完成，但 ${result.keptCommitted} 项已写回项目的改动未回滚`)
@@ -169,16 +177,20 @@ async function handleCommit(ids?: string[]): Promise<void> {
 </script>
 
 <template>
-  <section class="v2-dock">
+  <section class="v2-dock" :class="{ expanded: props.expanded }">
     <header class="dock-head">
       <div class="dock-brand">
         <span class="brand-mark"><Sparkles :size="15" /></span>
         <div class="brand-copy">
-          <strong>全局助手 v2</strong>
+          <strong>全局助手</strong>
           <span>{{ activeContextLabel }}</span>
         </div>
       </div>
       <div class="head-actions">
+        <button type="button" :title="props.expanded ? '退出沉浸模式' : '沉浸式对话'" @click="emit('toggleExpand')">
+          <Minimize2 v-if="props.expanded" :size="16" />
+          <Maximize2 v-else :size="16" />
+        </button>
         <button type="button" title="新建对话" @click="createSession">
           <Plus :size="16" />
         </button>
@@ -188,14 +200,14 @@ async function handleCommit(ids?: string[]): Promise<void> {
       </div>
     </header>
 
-    <div class="session-strip">
+    <div v-if="!props.expanded" class="session-strip">
       <span>{{ activeSessionTitle }}</span>
       <button type="button" @click="activeTab = 'sessions'">
         {{ assistant.sessions.value.length }} 个会话
       </button>
     </div>
 
-    <nav class="dock-tabs" aria-label="助手视图">
+    <nav v-if="!props.expanded" class="dock-tabs" aria-label="助手视图">
       <button
         type="button"
         :class="{ active: activeTab === 'chat' }"
@@ -223,7 +235,8 @@ async function handleCommit(ids?: string[]): Promise<void> {
       </button>
     </nav>
 
-    <div v-if="activeTab === 'sessions'" class="sessions-pane">
+    <div class="assistant-content">
+    <div v-show="props.expanded || activeTab === 'sessions'" class="sessions-pane">
       <AssistantSessionList
         :sessions="assistant.sessions.value"
         :active-session-id="assistant.activeSessionId.value"
@@ -234,7 +247,7 @@ async function handleCommit(ids?: string[]): Promise<void> {
       />
     </div>
 
-    <div v-else-if="activeTab === 'staged'" class="staged-pane">
+    <div v-show="props.expanded || activeTab === 'staged'" class="staged-pane">
       <StagedChangesView
         :changes="assistant.stagedChanges.value"
         :commit-results="assistant.commitResults.value"
@@ -247,7 +260,7 @@ async function handleCommit(ids?: string[]): Promise<void> {
       />
     </div>
 
-    <div v-else class="chat-pane">
+    <div v-show="props.expanded || activeTab === 'chat'" class="chat-pane">
       <AssistantMessages
         v-if="assistant.messages.value.length > 0 || assistant.isStreaming.value || assistant.isInitializing.value"
         :messages="assistant.messages.value"
@@ -269,7 +282,7 @@ async function handleCommit(ids?: string[]): Promise<void> {
 
       <div v-else class="starter">
         <div class="starter-head">
-          <div class="starter-kicker">Runtime v2</div>
+          <div class="starter-kicker">全局创作空间</div>
           <h3>从哪里开始？</h3>
           <p>{{ currentMode.description }}</p>
         </div>
@@ -312,15 +325,19 @@ async function handleCommit(ids?: string[]): Promise<void> {
         :mode-label="currentMode.label"
         :skill-policy="assistant.skillPolicy.value"
         :available-skills="assistant.availableSkills.value"
+        :turn-preview="assistant.turnPreview.value"
+        :is-previewing="assistant.isPreviewing.value"
         @send="sendWithMode"
+        @preview="previewWithMode"
         @cancel="assistant.cancel()"
         @edit-last="assistant.startEditingLastTurn()"
         @clear-restored="assistant.clearRestoredDraft()"
         @update:skill-policy="assistant.updateSkillPolicy"
       />
     </div>
+    </div>
 
-    <footer v-if="activeTab !== 'chat' && acceptedCount > 0" class="dock-foot">
+    <footer v-if="!props.expanded && activeTab !== 'chat' && acceptedCount > 0" class="dock-foot">
       <button type="button" @click="activeTab = 'staged'">
         {{ acceptedCount }} 项已确认，待写回
       </button>
@@ -517,8 +534,77 @@ async function handleCommit(ids?: string[]): Promise<void> {
   overflow: hidden;
 }
 
+.assistant-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.v2-dock.expanded .assistant-content {
+  display: grid;
+  grid-template-columns: minmax(190px, 230px) minmax(420px, 1fr) minmax(300px, 380px);
+  grid-template-areas: "sessions chat staged";
+}
+
+.v2-dock.expanded .sessions-pane {
+  grid-area: sessions;
+  border-right: 1px solid var(--arc-border);
+  background: var(--arc-bg-surface);
+}
+
+.v2-dock.expanded .staged-pane {
+  grid-area: staged;
+  border-left: 1px solid var(--arc-border);
+  background: var(--arc-bg-surface);
+}
+
+.v2-dock.expanded .chat-pane {
+  grid-area: chat;
+}
+
+.v2-dock.expanded .sessions-pane :deep(.collapse-side) {
+  display: none;
+}
+
+.v2-dock.expanded .chat-pane :deep(.messages) {
+  padding: 28px max(28px, calc((100% - 880px) / 2)) 18px;
+}
+
+.v2-dock.expanded .chat-pane :deep(.composer-wrap) {
+  padding: 12px max(28px, calc((100% - 880px) / 2)) 22px;
+}
+
+.v2-dock.expanded .chat-pane :deep(.composer) {
+  max-width: 880px;
+}
+
+.v2-dock.expanded .starter {
+  width: min(720px, calc(100% - 56px));
+  margin: 0 auto;
+  padding-top: 40px;
+}
+
 .chat-pane {
   position: relative;
+}
+
+@media (max-width: 1240px) {
+  .v2-dock.expanded .assistant-content {
+    grid-template-columns: 190px minmax(360px, 1fr) 300px;
+  }
+}
+
+@media (max-width: 980px) {
+  .v2-dock.expanded .assistant-content {
+    grid-template-columns: minmax(360px, 1fr) 300px;
+    grid-template-areas: "chat staged";
+  }
+
+  .v2-dock.expanded .sessions-pane {
+    display: none !important;
+  }
 }
 
 .starter {

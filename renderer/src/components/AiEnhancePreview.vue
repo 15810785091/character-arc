@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NCheckbox, NModal, NTag } from 'naive-ui'
+import { resolveEnhanceTagLabel } from '@/features/ai/enhancePreview'
+import type { EnhanceTagLabels } from '@/features/ai/enhancePreview'
 
 export interface EnhanceFieldDiff {
   key: string
@@ -9,6 +11,8 @@ export interface EnhanceFieldDiff {
   original: string | string[]
   suggested: string | string[]
   changed: boolean
+  /** 标签字段的显示名称映射；采纳时仍回传 original/suggested 中的稳定值。 */
+  tagLabels?: EnhanceTagLabels
 }
 
 const props = defineProps<{
@@ -87,7 +91,7 @@ function handleAcceptSelected(): void {
             <template v-if="field.type === 'tags'">
               <span v-if="!Array.isArray(field.original) || field.original.length === 0" class="empty-hint">（空）</span>
               <span v-else class="tag-list">
-                <n-tag v-for="t in field.original" :key="String(t)" size="small" round>{{ t }}</n-tag>
+                <n-tag v-for="t in field.original" :key="String(t)" size="small" round>{{ resolveEnhanceTagLabel(t, field.tagLabels) }}</n-tag>
               </span>
             </template>
             <span v-else class="field-text">{{ field.original || '（空）' }}</span>
@@ -96,7 +100,7 @@ function handleAcceptSelected(): void {
             <span class="compare-tag suggested">AI 建议</span>
             <template v-if="field.type === 'tags'">
               <span class="tag-list">
-                <n-tag v-for="t in field.suggested" :key="String(t)" size="small" round type="success">{{ t }}</n-tag>
+                <n-tag v-for="t in field.suggested" :key="String(t)" size="small" round type="success">{{ resolveEnhanceTagLabel(t, field.tagLabels) }}</n-tag>
               </span>
             </template>
             <span v-else class="field-text highlighted">{{ field.suggested }}</span>

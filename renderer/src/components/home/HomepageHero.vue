@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Bell, BookOpen, BookUp2, Flame, ImagePlus, LibraryBig, Plus, RefreshCw, Settings2, Upload, Wrench } from 'lucide-vue-next'
-import { NButton } from 'naive-ui'
+import { Bell, BookOpen, BookUp2, Plus, RefreshCw, Settings2, Upload, Wrench } from 'lucide-vue-next'
+import { NButton, NDropdown } from 'naive-ui'
+import type { DropdownOption } from 'naive-ui'
 import type { StatusIndicator } from '@/composables/useStartupCheck'
 
 defineProps<{
@@ -21,6 +22,20 @@ const emit = defineEmits<{
   (e: 'openTutorial'): void
   (e: 'checkUpdate'): void
 }>()
+
+const advancedToolOptions: DropdownOption[] = [
+  { label: '拆书知识库', key: 'deconstruction' },
+  { label: '写作 Skills', key: 'skills' },
+  { label: '封面工作台', key: 'cover' },
+  { label: '网文风向标', key: 'trends' }
+]
+
+function openAdvancedTool(key: string | number): void {
+  if (key === 'deconstruction') emit('openDeconstruction')
+  if (key === 'skills') emit('openSkills')
+  if (key === 'cover') emit('openCoverWorkbench')
+  if (key === 'trends') emit('openFanqieTrends')
+}
 </script>
 
 <template>
@@ -42,20 +57,12 @@ const emit = defineEmits<{
         <RefreshCw :size="18" />
         <span v-if="updateStatus && updateStatus !== 'none'" class="status-dot" :class="`status-dot--${updateStatus}`" />
       </button>
-      <button class="hero-icon-btn" title="网文风向标" @click="emit('openFanqieTrends')">
-        <Flame :size="18" />
-      </button>
-
       <div class="action-group secondary-actions">
-        <n-button quaternary circle size="large" title="拆书知识库" @click="emit('openDeconstruction')">
-          <template #icon><LibraryBig :size="20" /></template>
-        </n-button>
-        <n-button quaternary circle size="large" title="Skills" @click="emit('openSkills')">
-          <template #icon><Wrench :size="20" /></template>
-        </n-button>
-        <n-button quaternary circle size="large" title="封面工作台" @click="emit('openCoverWorkbench')">
-          <template #icon><ImagePlus :size="20" /></template>
-        </n-button>
+        <n-dropdown trigger="click" :options="advancedToolOptions" @select="openAdvancedTool">
+          <n-button quaternary circle size="large" title="高级工具">
+            <template #icon><Wrench :size="20" /></template>
+          </n-button>
+        </n-dropdown>
         <n-button quaternary circle size="large" title="设置" @click="emit('openSettings')">
           <template #icon><Settings2 :size="20" /></template>
         </n-button>

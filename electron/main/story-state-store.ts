@@ -26,6 +26,23 @@ export interface Foreshadowing {
   resolvedChapter: number | null
   clues: Array<{ chapter: number; clue: string; method?: string }>
   connections: string[]
+  statusManagedBy: 'auto' | 'manual'
+}
+
+export type RelationshipLifecycleStatus = 'active' | 'dormant' | 'archived'
+
+export interface RelationshipHistoryEntry {
+  id: string
+  chapterIndex: number | null
+  fromStatus: string
+  toStatus: string
+  pivotEvent: string
+  tensionsAdded: string[]
+  tensionsResolved: string[]
+  lifecycleFrom: RelationshipLifecycleStatus | ''
+  lifecycleTo: RelationshipLifecycleStatus | ''
+  source: 'ai' | 'automatic' | 'manual'
+  createdAt: string
 }
 
 export interface Relationship {
@@ -36,6 +53,9 @@ export interface Relationship {
   tensionPoints: string[]
   trajectory: string
   lastInteractionChapter: number | null
+  lifecycleStatus: RelationshipLifecycleStatus
+  lifecycleManagedBy: 'auto' | 'manual'
+  history: RelationshipHistoryEntry[]
 }
 
 export interface TimelineEntry {
@@ -61,7 +81,49 @@ export interface CountdownClock {
   urgency: string
 }
 
+export type EntityCandidateKind = 'character' | 'organization'
+export type EntityCandidateStatus = 'observing' | 'pending' | 'confirmed' | 'ignored'
+
+export interface EntityCandidateEvidence {
+  chapterIndex: number
+  quote: string
+}
+
+/**
+ * 正文中发现、但尚未进入正式人物/势力库的项目级候选资料。
+ * observing 用于跨章节累计证据，pending 才会打扰用户审阅。
+ */
+export interface EntityCandidate {
+  id: string
+  kind: EntityCandidateKind
+  name: string
+  aliases: string[]
+  roleOrType: string
+  description: string
+  status: EntityCandidateStatus
+  confidence: number
+  chapterCount: number
+  evidence: EntityCandidateEvidence[]
+  hasDialogue: boolean
+  plotImpact: boolean
+  explicitImportance: boolean
+  linkedEntityId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface StateDelta {
+  entity_candidates?: Array<{
+    kind: EntityCandidateKind
+    name: string
+    aliases?: string[]
+    role_or_type?: string
+    description?: string
+    source_quote: string
+    has_dialogue?: boolean
+    plot_impact?: boolean
+    explicit_importance?: boolean
+  }>
   characters_updated: Array<{
     character_id: string
     changes: {
@@ -80,11 +142,14 @@ export interface StateDelta {
     participants?: [string, string]
     status_change?: { from: string; to: string; pivot_event: string }
     new_tension_points?: string[]
+    resolved_tension_points?: string[]
+    lifecycle?: 'active' | 'dormant' | 'archived'
   }>
   foreshadowing_delta: {
     planted: Array<{ id: string; type: string; description: string; method: string; payoff_chapter?: number }>
     advanced: Array<{ id: string; clue: string; method: string }>
     resolved: Array<{ id: string; method: string; impact: string }>
+    abandoned: Array<{ id: string; reason: string }>
   }
   timeline: {
     story_time_elapsed: string
@@ -131,6 +196,31 @@ function uniqueBy<T>(items: T[], keyOf: (item: T) => string): T[] {
     seen.add(key)
     return true
   })
+}
+
+export function normalizeCandidateName(value: string): string {
+  return value
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('zh-CN')
+    .replace(/[\s·・•._—–-]+/g, '')
+    .replace(/[“”‘’'"《》〈〉【】\[\]()（）]/g, '')
+}
+
+const GENERIC_ENTITY_NAMES = new Set([
+  '路人', '路人甲', '路人乙', '守卫', '侍卫', '卫兵', '士兵', '弟子', '师兄', '师姐',
+  '师弟', '师妹', '老人', '老者', '男人', '女人', '少年', '少女', '孩子', '店小二',
+  '掌柜', '黑衣人', '蒙面人', '陌生人', '众人', '村民', '学生', '老师', '医生', '护士'
+])
+
+export function isEligibleCandidateName(value: string): boolean {
+  const name = value.trim()
+  if (name.length < 2 || name.length > 32) return false
+  const normalized = normalizeCandidateName(name)
+  if (!normalized || GENERIC_ENTITY_NAMES.has(normalized)) return false
+  if (/^(一名|一个|那个|这位|某个|几名|两名)/.test(name)) return false
+  if (/^(第[一二三四五六七八九十百]+|[甲乙丙丁戊己庚辛壬癸])号$/.test(name)) return false
+  return true
 }
 
 /** 将不可信的模型输出收敛为可安全遍历、可写入 SQLite 的状态增量。 */
@@ -195,9 +285,14 @@ export function normalizeStateDelta(value: unknown): StateDelta {
       status_change: statusTo
         ? { from: asString(rawStatus.from), to: statusTo, pivot_event: asString(rawStatus.pivot_event) }
         : undefined,
-      new_tension_points: uniqueStrings(record.new_tension_points)
+      new_tension_points: uniqueStrings(record.new_tension_points),
+      resolved_tension_points: uniqueStrings(record.resolved_tension_points),
+      lifecycle: ['active', 'dormant', 'archived'].includes(asString(record.lifecycle))
+        ? asString(record.lifecycle) as RelationshipLifecycleStatus
+        : undefined
     }
     return normalized.participants || normalized.status_change || normalized.new_tension_points.length
+      || normalized.resolved_tension_points.length || normalized.lifecycle
       ? [normalized]
       : []
   })
@@ -227,15 +322,40 @@ export function normalizeStateDelta(value: unknown): StateDelta {
     const id = asString(record.id)
     return id ? [{ id, method: asString(record.method), impact: asString(record.impact) }] : []
   })
+  const abandoned = asItems(rawForeshadowing.abandoned).flatMap((item) => {
+    const record = asRecord(item)
+    const id = asString(record.id)
+    return id ? [{ id, reason: asString(record.reason) }] : []
+  })
 
   const rawTimeline = asRecord(root.timeline)
+  const entityCandidates = asItems(root.entity_candidates).flatMap((item) => {
+    const record = asRecord(item)
+    const kind = asString(record.kind)
+    const name = asString(record.name)
+    const sourceQuote = asString(record.source_quote)
+    if ((kind !== 'character' && kind !== 'organization') || !name || !sourceQuote) return []
+    return [{
+      kind: kind as EntityCandidateKind,
+      name,
+      aliases: uniqueStrings(record.aliases),
+      role_or_type: asString(record.role_or_type),
+      description: asString(record.description),
+      source_quote: sourceQuote,
+      has_dialogue: Boolean(record.has_dialogue),
+      plot_impact: Boolean(record.plot_impact),
+      explicit_importance: Boolean(record.explicit_importance)
+    }]
+  })
   return {
+    entity_candidates: uniqueBy(entityCandidates, (item) => `${item.kind}\u0000${normalizeCandidateName(item.name)}`),
     characters_updated: uniqueBy(charactersUpdated, (item) => item.character_id),
     relationships_delta: uniqueBy(relationshipsDelta, (item) => item.relationship_id),
     foreshadowing_delta: {
       planted: uniqueBy(planted, (item) => item.id),
       advanced: uniqueBy(advanced, (item) => `${item.id}\u0000${item.clue}\u0000${item.method}`),
-      resolved: uniqueBy(resolved, (item) => item.id)
+      resolved: uniqueBy(resolved, (item) => item.id),
+      abandoned: uniqueBy(abandoned, (item) => item.id)
     },
     timeline: {
       story_time_elapsed: asString(rawTimeline.story_time_elapsed),
@@ -247,11 +367,13 @@ export function normalizeStateDelta(value: unknown): StateDelta {
 }
 
 export function hasStateDeltaContent(delta: StateDelta): boolean {
-  return delta.characters_updated.length > 0
+  return Boolean(delta.entity_candidates?.length)
+    || delta.characters_updated.length > 0
     || delta.relationships_delta.length > 0
     || delta.foreshadowing_delta.planted.length > 0
     || delta.foreshadowing_delta.advanced.length > 0
     || delta.foreshadowing_delta.resolved.length > 0
+    || delta.foreshadowing_delta.abandoned.length > 0
     || delta.timeline.events.length > 0
     || Boolean(delta.timeline.world_state_changes?.length)
     || Boolean(delta.timeline.current_story_date)
@@ -273,6 +395,39 @@ export interface StoryStateContext {
   worldRules: WorldRule[]
   activeClocks: CountdownClock[]
 }
+
+export interface StoryStateOverview extends StoryStateContext {
+  allForeshadowing: Foreshadowing[]
+  allRelationships: Relationship[]
+  entityCandidates: EntityCandidate[]
+}
+
+export type StoryStateLifecycleAction =
+  | {
+      kind: 'foreshadowing-status'
+      entityId: string
+      status: Foreshadowing['status']
+    }
+  | {
+      kind: 'relationship-lifecycle'
+      entityId: string
+      status: RelationshipLifecycleStatus | 'auto'
+    }
+  | {
+      kind: 'relationship-resolve-tension'
+      entityId: string
+      tensionPoint: string
+    }
+  | {
+      kind: 'entity-candidate-status'
+      entityId: string
+      status: 'observing' | 'ignored'
+    }
+  | {
+      kind: 'entity-candidate-confirm'
+      entityId: string
+      linkedEntityId: string
+    }
 
 // ==================== Schema ====================
 
@@ -309,6 +464,7 @@ const STORY_STATE_SCHEMA = `
     resolved_chapter INTEGER,
     clues_json TEXT NOT NULL DEFAULT '[]',
     connections_json TEXT NOT NULL DEFAULT '[]',
+    status_managed_by TEXT NOT NULL DEFAULT 'auto',
     updated_at TEXT NOT NULL
   ) STRICT;
 
@@ -325,11 +481,32 @@ const STORY_STATE_SCHEMA = `
     tension_points_json TEXT NOT NULL DEFAULT '[]',
     trajectory TEXT NOT NULL DEFAULT '',
     last_interaction_chapter INTEGER,
+    lifecycle_status TEXT NOT NULL DEFAULT 'active',
+    lifecycle_managed_by TEXT NOT NULL DEFAULT 'auto',
     updated_at TEXT NOT NULL
   ) STRICT;
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_relationships_project_rid
     ON story_relationships(project_id, relationship_id);
+
+  CREATE TABLE IF NOT EXISTS story_relationship_history (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    relationship_id TEXT NOT NULL,
+    chapter_index INTEGER,
+    from_status TEXT NOT NULL DEFAULT '',
+    to_status TEXT NOT NULL DEFAULT '',
+    pivot_event TEXT NOT NULL DEFAULT '',
+    tensions_added_json TEXT NOT NULL DEFAULT '[]',
+    tensions_resolved_json TEXT NOT NULL DEFAULT '[]',
+    lifecycle_from TEXT NOT NULL DEFAULT '',
+    lifecycle_to TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'ai',
+    created_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE INDEX IF NOT EXISTS idx_relationship_history_lookup
+    ON story_relationship_history(project_id, relationship_id, chapter_index DESC);
 
   CREATE TABLE IF NOT EXISTS story_timeline (
     id TEXT PRIMARY KEY,
@@ -368,6 +545,33 @@ const STORY_STATE_SCHEMA = `
     urgency TEXT NOT NULL DEFAULT 'medium',
     updated_at TEXT NOT NULL
   ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS story_entity_candidates (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    role_or_type TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'observing',
+    confidence INTEGER NOT NULL DEFAULT 0,
+    chapter_indexes_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    has_dialogue INTEGER NOT NULL DEFAULT 0,
+    plot_impact INTEGER NOT NULL DEFAULT 0,
+    explicit_importance INTEGER NOT NULL DEFAULT 0,
+    linked_entity_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  ) STRICT;
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_story_entity_candidates_unique
+    ON story_entity_candidates(project_id, kind, normalized_name);
+
+  CREATE INDEX IF NOT EXISTS idx_story_entity_candidates_status
+    ON story_entity_candidates(project_id, status, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS story_embeddings (
     id TEXT PRIMARY KEY,
@@ -412,6 +616,15 @@ function now(): string {
 
 export function initStoryStateSchema(db: DatabaseSync): void {
   db.exec(STORY_STATE_SCHEMA)
+  ensureColumn(db, 'story_foreshadowing', 'status_managed_by', "TEXT NOT NULL DEFAULT 'auto'")
+  ensureColumn(db, 'story_relationships', 'lifecycle_status', "TEXT NOT NULL DEFAULT 'active'")
+  ensureColumn(db, 'story_relationships', 'lifecycle_managed_by', "TEXT NOT NULL DEFAULT 'auto'")
+}
+
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<Record<string, unknown>>
+  if (columns.some((item) => String(item.name) === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
 }
 
 export function getLatestCharacterStates(
@@ -478,14 +691,64 @@ export function getActiveForeshadowing(
     payoffChapter: row.payoff_chapter != null ? Number(row.payoff_chapter) : null,
     resolvedChapter: row.resolved_chapter != null ? Number(row.resolved_chapter) : null,
     clues: parseJson<Foreshadowing['clues']>(row.clues_json, []),
-    connections: parseJson<string[]>(row.connections_json, [])
+    connections: parseJson<string[]>(row.connections_json, []),
+    statusManagedBy: String(row.status_managed_by ?? 'auto') === 'manual' ? 'manual' : 'auto'
+  }))
+}
+
+export function getAllForeshadowing(db: DatabaseSync, projectId: string): Foreshadowing[] {
+  const rows = db.prepare(`
+    SELECT * FROM story_foreshadowing
+    WHERE project_id = ?
+    ORDER BY planted_chapter ASC, rowid ASC
+  `).all(projectId) as Array<Record<string, unknown>>
+  return rows.map((row) => ({
+    foreshadowingId: String(row.foreshadowing_id),
+    type: String(row.type),
+    description: String(row.description),
+    status: String(row.status) as Foreshadowing['status'],
+    plantedChapter: Number(row.planted_chapter),
+    plantedMethod: String(row.planted_method ?? ''),
+    payoffChapter: row.payoff_chapter != null ? Number(row.payoff_chapter) : null,
+    resolvedChapter: row.resolved_chapter != null ? Number(row.resolved_chapter) : null,
+    clues: parseJson<Foreshadowing['clues']>(row.clues_json, []),
+    connections: parseJson<string[]>(row.connections_json, []),
+    statusManagedBy: String(row.status_managed_by ?? 'auto') === 'manual' ? 'manual' : 'auto'
+  }))
+}
+
+function getRelationshipHistory(
+  db: DatabaseSync,
+  projectId: string,
+  relationshipId: string
+): RelationshipHistoryEntry[] {
+  const rows = db.prepare(`
+    SELECT * FROM story_relationship_history
+    WHERE project_id = ? AND relationship_id = ?
+    ORDER BY COALESCE(chapter_index, -1) DESC, created_at DESC, rowid DESC
+    LIMIT 50
+  `).all(projectId, relationshipId) as Array<Record<string, unknown>>
+  return rows.map((row) => ({
+    id: String(row.id),
+    chapterIndex: row.chapter_index == null ? null : Number(row.chapter_index),
+    fromStatus: String(row.from_status ?? ''),
+    toStatus: String(row.to_status ?? ''),
+    pivotEvent: String(row.pivot_event ?? ''),
+    tensionsAdded: parseJson<string[]>(row.tensions_added_json, []),
+    tensionsResolved: parseJson<string[]>(row.tensions_resolved_json, []),
+    lifecycleFrom: String(row.lifecycle_from ?? '') as RelationshipHistoryEntry['lifecycleFrom'],
+    lifecycleTo: String(row.lifecycle_to ?? '') as RelationshipHistoryEntry['lifecycleTo'],
+    source: String(row.source ?? 'ai') as RelationshipHistoryEntry['source'],
+    createdAt: String(row.created_at ?? '')
   }))
 }
 
 export function getRelationships(
   db: DatabaseSync,
   projectId: string,
-  characterIds?: string[]
+  characterIds?: string[],
+  includeInactive = false,
+  includeHistory = false
 ): Relationship[] {
   let sql = `SELECT * FROM story_relationships WHERE project_id = ?`
   const params: (string | number | null)[] = [projectId]
@@ -495,18 +758,26 @@ export function getRelationships(
     sql += ` AND (participant_a IN (${placeholders}) OR participant_b IN (${placeholders}))`
     params.push(...characterIds, ...characterIds)
   }
+  if (!includeInactive) {
+    sql += ` AND lifecycle_status = 'active'`
+  }
 
   const stmt = db.prepare(sql)
   const rows = stmt.all(...params) as Array<Record<string, unknown>>
-  return rows.map((row) => ({
-    relationshipId: String(row.relationship_id),
+  return rows.map((row) => {
+    const relationshipId = String(row.relationship_id)
+    return {
+    relationshipId,
     participantA: String(row.participant_a),
     participantB: String(row.participant_b),
     currentStatus: String(row.current_status),
     tensionPoints: parseJson<string[]>(row.tension_points_json, []),
     trajectory: String(row.trajectory ?? ''),
-    lastInteractionChapter: row.last_interaction_chapter != null ? Number(row.last_interaction_chapter) : null
-  }))
+    lastInteractionChapter: row.last_interaction_chapter != null ? Number(row.last_interaction_chapter) : null,
+    lifecycleStatus: String(row.lifecycle_status ?? 'active') as RelationshipLifecycleStatus,
+    lifecycleManagedBy: String(row.lifecycle_managed_by ?? 'auto') === 'manual' ? 'manual' : 'auto',
+    history: includeHistory ? getRelationshipHistory(db, projectId, relationshipId) : []
+  }})
 }
 
 export function getRecentTimeline(
@@ -553,6 +824,146 @@ export function getActiveClocks(db: DatabaseSync, projectId: string): CountdownC
   }))
 }
 
+export function getEntityCandidates(db: DatabaseSync, projectId: string): EntityCandidate[] {
+  const rows = db.prepare(`
+    SELECT * FROM story_entity_candidates
+    WHERE project_id = ?
+    ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'observing' THEN 1 WHEN 'confirmed' THEN 2 ELSE 3 END,
+             updated_at DESC, rowid DESC
+  `).all(projectId) as Array<Record<string, unknown>>
+  return rows.map((row) => ({
+    id: String(row.id),
+    kind: String(row.kind) as EntityCandidateKind,
+    name: String(row.name),
+    aliases: parseJson<string[]>(row.aliases_json, []),
+    roleOrType: String(row.role_or_type ?? ''),
+    description: String(row.description ?? ''),
+    status: String(row.status) as EntityCandidateStatus,
+    confidence: Number(row.confidence ?? 0),
+    chapterCount: parseJson<number[]>(row.chapter_indexes_json, []).length,
+    evidence: parseJson<EntityCandidateEvidence[]>(row.evidence_json, []),
+    hasDialogue: Boolean(row.has_dialogue),
+    plotImpact: Boolean(row.plot_impact),
+    explicitImportance: Boolean(row.explicit_importance),
+    linkedEntityId: String(row.linked_entity_id ?? ''),
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? '')
+  }))
+}
+
+function findExistingEntityId(
+  db: DatabaseSync,
+  projectId: string,
+  kind: EntityCandidateKind,
+  names: string[]
+): string {
+  const normalizedNames = new Set(names.map(normalizeCandidateName).filter(Boolean))
+  if (!normalizedNames.size) return ''
+  const table = kind === 'character' ? 'characters' : 'organizations'
+  try {
+    const rows = db.prepare(`SELECT id, name FROM ${table} WHERE project_id = ?`).all(projectId) as Array<Record<string, unknown>>
+    const match = rows.find((row) => normalizedNames.has(normalizeCandidateName(String(row.name ?? ''))))
+    return match ? String(match.id) : ''
+  } catch {
+    // 独立 story-state 测试数据库不一定包含工作区业务表。
+    return ''
+  }
+}
+
+function upsertEntityCandidate(
+  db: DatabaseSync,
+  projectId: string,
+  chapterIndex: number,
+  candidate: NonNullable<StateDelta['entity_candidates']>[number],
+  timestamp: string
+): void {
+  const name = candidate.name.trim()
+  const aliases = [...new Set((candidate.aliases ?? []).map((item) => item.trim()).filter(Boolean))]
+  if (!isEligibleCandidateName(name)) return
+  // 候选名必须在模型提供的原文证据中逐字出现，避免模型凭空取名。
+  if (!candidate.source_quote.includes(name)) return
+  const linkedEntityId = findExistingEntityId(db, projectId, candidate.kind, [name, ...aliases])
+  const normalizedName = normalizeCandidateName(name)
+  const existing = db.prepare(`
+    SELECT * FROM story_entity_candidates
+    WHERE project_id = ? AND kind = ? AND normalized_name = ?
+  `).get(projectId, candidate.kind, normalizedName) as Record<string, unknown> | undefined
+
+  if (linkedEntityId) {
+    if (existing && String(existing.status) !== 'ignored') {
+      db.prepare(`
+        UPDATE story_entity_candidates
+        SET status = 'confirmed', linked_entity_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(linkedEntityId, timestamp, String(existing.id))
+    }
+    return
+  }
+
+  const chapterIndexes = existing
+    ? parseJson<number[]>(existing.chapter_indexes_json, [])
+    : []
+  if (!chapterIndexes.includes(chapterIndex)) chapterIndexes.push(chapterIndex)
+  chapterIndexes.sort((a, b) => a - b)
+
+  const evidence = existing
+    ? parseJson<EntityCandidateEvidence[]>(existing.evidence_json, [])
+    : []
+  if (!evidence.some((item) => item.chapterIndex === chapterIndex && item.quote === candidate.source_quote)) {
+    evidence.push({ chapterIndex, quote: candidate.source_quote.slice(0, 280) })
+  }
+
+  const hasDialogue = Boolean(candidate.has_dialogue || existing?.has_dialogue)
+  const plotImpact = Boolean(candidate.plot_impact || existing?.plot_impact)
+  const explicitImportance = Boolean(candidate.explicit_importance || existing?.explicit_importance)
+  const confidence = Math.min(99,
+    35
+    + Math.min(chapterIndexes.length, 3) * 20
+    + (hasDialogue ? 6 : 0)
+    + (plotImpact ? 18 : 0)
+    + (explicitImportance ? 25 : 0)
+  )
+  const previousStatus = existing ? String(existing.status) as EntityCandidateStatus : 'observing'
+  const qualifies = chapterIndexes.length >= 2 || explicitImportance || plotImpact
+  const status: EntityCandidateStatus = previousStatus === 'confirmed' || previousStatus === 'ignored'
+    ? previousStatus
+    : qualifies ? 'pending' : 'observing'
+  const mergedAliases = [...new Set([
+    ...(existing ? parseJson<string[]>(existing.aliases_json, []) : []),
+    ...aliases
+  ])]
+  const roleOrType = candidate.role_or_type?.trim() || String(existing?.role_or_type ?? '')
+  const description = candidate.description?.trim() || String(existing?.description ?? '')
+
+  if (existing) {
+    db.prepare(`
+      UPDATE story_entity_candidates
+      SET name = ?, aliases_json = ?, role_or_type = ?, description = ?, status = ?, confidence = ?,
+          chapter_indexes_json = ?, evidence_json = ?, has_dialogue = ?, plot_impact = ?,
+          explicit_importance = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      name, JSON.stringify(mergedAliases), roleOrType, description, status, confidence,
+      JSON.stringify(chapterIndexes), JSON.stringify(evidence.slice(-12)), hasDialogue ? 1 : 0,
+      plotImpact ? 1 : 0, explicitImportance ? 1 : 0, timestamp, String(existing.id)
+    )
+    return
+  }
+
+  db.prepare(`
+    INSERT INTO story_entity_candidates (
+      id, project_id, kind, normalized_name, name, aliases_json, role_or_type, description,
+      status, confidence, chapter_indexes_json, evidence_json, has_dialogue, plot_impact,
+      explicit_importance, linked_entity_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+  `).run(
+    uid(), projectId, candidate.kind, normalizedName, name, JSON.stringify(mergedAliases),
+    roleOrType, description, status, confidence, JSON.stringify(chapterIndexes),
+    JSON.stringify(evidence), hasDialogue ? 1 : 0, plotImpact ? 1 : 0,
+    explicitImportance ? 1 : 0, timestamp, timestamp
+  )
+}
+
 export function getForeshadowingHealth(
   db: DatabaseSync,
   projectId: string,
@@ -577,6 +988,205 @@ export function getForeshadowingHealth(
 
 // ==================== Write Operations ====================
 
+export const RELATIONSHIP_DORMANT_AFTER_CHAPTERS = 12
+export const RELATIONSHIP_ARCHIVED_AFTER_CHAPTERS = 30
+
+function appendRelationshipHistory(
+  db: DatabaseSync,
+  input: {
+    projectId: string
+    relationshipId: string
+    chapterIndex: number | null
+    fromStatus?: string
+    toStatus?: string
+    pivotEvent?: string
+    tensionsAdded?: string[]
+    tensionsResolved?: string[]
+    lifecycleFrom?: RelationshipLifecycleStatus | ''
+    lifecycleTo?: RelationshipLifecycleStatus | ''
+    source: RelationshipHistoryEntry['source']
+  }
+): void {
+  if (input.source === 'ai' && input.chapterIndex !== null) {
+    db.prepare(`
+      DELETE FROM story_relationship_history
+      WHERE project_id = ? AND relationship_id = ? AND chapter_index = ? AND source = 'ai'
+    `).run(input.projectId, input.relationshipId, input.chapterIndex)
+  }
+  db.prepare(`
+    INSERT INTO story_relationship_history
+      (id, project_id, relationship_id, chapter_index, from_status, to_status, pivot_event,
+       tensions_added_json, tensions_resolved_json, lifecycle_from, lifecycle_to, source, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uid(), input.projectId, input.relationshipId, input.chapterIndex,
+    input.fromStatus ?? '', input.toStatus ?? '', input.pivotEvent ?? '',
+    JSON.stringify(input.tensionsAdded ?? []), JSON.stringify(input.tensionsResolved ?? []),
+    input.lifecycleFrom ?? '', input.lifecycleTo ?? '', input.source, now()
+  )
+}
+
+/**
+ * 自动收敛长时间无互动的关系，避免无关关系永久占据 AI 上下文。
+ * 手动指定的生命周期不会被时间规则覆盖；一旦新章节再次产生关系变更，
+ * applyStateDelta 会自动唤醒该关系并恢复自动管理。
+ */
+export function refreshAutomaticRelationshipLifecycle(
+  db: DatabaseSync,
+  projectId: string,
+  currentChapterIndex: number
+): void {
+  const rows = db.prepare(`
+    SELECT relationship_id, lifecycle_status, last_interaction_chapter
+    FROM story_relationships
+    WHERE project_id = ? AND lifecycle_managed_by = 'auto'
+  `).all(projectId) as Array<Record<string, unknown>>
+
+  for (const row of rows) {
+    const lastInteraction = row.last_interaction_chapter == null ? null : Number(row.last_interaction_chapter)
+    if (lastInteraction === null || !Number.isFinite(lastInteraction)) continue
+    const idleChapters = Math.max(0, currentChapterIndex - lastInteraction)
+    const current = String(row.lifecycle_status ?? 'active') as RelationshipLifecycleStatus
+    let next = current
+    if (idleChapters >= RELATIONSHIP_ARCHIVED_AFTER_CHAPTERS) next = 'archived'
+    else if (idleChapters >= RELATIONSHIP_DORMANT_AFTER_CHAPTERS && current === 'active') next = 'dormant'
+    if (next === current) continue
+    db.prepare(`
+      UPDATE story_relationships
+      SET lifecycle_status = ?, updated_at = ?
+      WHERE project_id = ? AND relationship_id = ?
+    `).run(next, now(), projectId, String(row.relationship_id))
+    appendRelationshipHistory(db, {
+      projectId,
+      relationshipId: String(row.relationship_id),
+      chapterIndex: currentChapterIndex,
+      lifecycleFrom: current,
+      lifecycleTo: next,
+      source: 'automatic'
+    })
+  }
+}
+
+function getLatestStoryChapterIndex(db: DatabaseSync, projectId: string): number {
+  const row = db.prepare(`
+    SELECT MAX(chapter_index) AS chapter_index FROM (
+      SELECT chapter_index FROM story_timeline WHERE project_id = ?
+      UNION ALL
+      SELECT chapter_index FROM story_character_state WHERE project_id = ?
+      UNION ALL
+      SELECT last_interaction_chapter AS chapter_index FROM story_relationships WHERE project_id = ?
+    )
+  `).get(projectId, projectId, projectId) as Record<string, unknown> | undefined
+  const value = Number(row?.chapter_index ?? 0)
+  let latest = Number.isFinite(value) ? value : 0
+  try {
+    const chapterRow = db.prepare(`SELECT MAX(sort_order) AS chapter_index FROM chapters WHERE project_id = ?`).get(projectId) as Record<string, unknown> | undefined
+    const chapterValue = Number(chapterRow?.chapter_index ?? 0)
+    if (Number.isFinite(chapterValue)) latest = Math.max(latest, chapterValue)
+  } catch {
+    // 独立状态库测试或旧数据库可能尚未创建 chapters 表。
+  }
+  return latest
+}
+
+export function updateStoryStateLifecycle(
+  db: DatabaseSync,
+  projectId: string,
+  action: StoryStateLifecycleAction
+): void {
+  if (action.kind === 'foreshadowing-status' && !['active', 'advanced', 'resolved', 'abandoned'].includes(action.status)) {
+    throw new Error('不支持的伏笔状态。')
+  }
+  if (action.kind === 'relationship-lifecycle' && !['auto', 'active', 'dormant', 'archived'].includes(action.status)) {
+    throw new Error('不支持的关系生命周期。')
+  }
+  if (action.kind === 'relationship-resolve-tension' && !action.tensionPoint.trim()) {
+    throw new Error('缺少要解决的关系张力。')
+  }
+  if (action.kind === 'entity-candidate-confirm' && !action.linkedEntityId.trim()) {
+    throw new Error('缺少候选资料关联的正式词条。')
+  }
+  const timestamp = now()
+  db.exec('BEGIN')
+  try {
+    if (action.kind === 'foreshadowing-status') {
+      const row = db.prepare(`
+        SELECT status FROM story_foreshadowing WHERE project_id = ? AND foreshadowing_id = ?
+      `).get(projectId, action.entityId) as Record<string, unknown> | undefined
+      if (!row) throw new Error('伏笔不存在。')
+      const resolvedChapter = action.status === 'resolved' ? getLatestStoryChapterIndex(db, projectId) : null
+      db.prepare(`
+        UPDATE story_foreshadowing
+        SET status = ?, resolved_chapter = ?, status_managed_by = 'manual', updated_at = ?
+        WHERE project_id = ? AND foreshadowing_id = ?
+      `).run(action.status, resolvedChapter, timestamp, projectId, action.entityId)
+    } else if (action.kind === 'relationship-lifecycle') {
+      const row = db.prepare(`
+        SELECT lifecycle_status FROM story_relationships WHERE project_id = ? AND relationship_id = ?
+      `).get(projectId, action.entityId) as Record<string, unknown> | undefined
+      if (!row) throw new Error('角色关系不存在。')
+      const previous = String(row.lifecycle_status ?? 'active') as RelationshipLifecycleStatus
+      const next = action.status === 'auto' ? 'active' : action.status
+      const reviewedChapter = getLatestStoryChapterIndex(db, projectId)
+      db.prepare(`
+        UPDATE story_relationships
+        SET lifecycle_status = ?, lifecycle_managed_by = ?,
+            last_interaction_chapter = CASE WHEN ? = 'auto' THEN ? ELSE last_interaction_chapter END,
+            updated_at = ?
+        WHERE project_id = ? AND relationship_id = ?
+      `).run(next, action.status === 'auto' ? 'auto' : 'manual', action.status, reviewedChapter, timestamp, projectId, action.entityId)
+      appendRelationshipHistory(db, {
+        projectId,
+        relationshipId: action.entityId,
+        chapterIndex: reviewedChapter,
+        lifecycleFrom: previous,
+        lifecycleTo: next,
+        source: 'manual'
+      })
+    } else if (action.kind === 'relationship-resolve-tension') {
+      const row = db.prepare(`
+        SELECT tension_points_json FROM story_relationships WHERE project_id = ? AND relationship_id = ?
+      `).get(projectId, action.entityId) as Record<string, unknown> | undefined
+      if (!row) throw new Error('角色关系不存在。')
+      const existing = parseJson<string[]>(row.tension_points_json, [])
+      const next = existing.filter((item) => item !== action.tensionPoint)
+      if (next.length !== existing.length) {
+        db.prepare(`
+          UPDATE story_relationships SET tension_points_json = ?, updated_at = ?
+          WHERE project_id = ? AND relationship_id = ?
+        `).run(JSON.stringify(next), timestamp, projectId, action.entityId)
+        appendRelationshipHistory(db, {
+          projectId,
+          relationshipId: action.entityId,
+          chapterIndex: getLatestStoryChapterIndex(db, projectId),
+          tensionsResolved: [action.tensionPoint],
+          source: 'manual'
+        })
+      }
+    } else if (action.kind === 'entity-candidate-status') {
+      const result = db.prepare(`
+        UPDATE story_entity_candidates
+        SET status = ?, linked_entity_id = '', updated_at = ?
+        WHERE project_id = ? AND id = ?
+      `).run(action.status, timestamp, projectId, action.entityId)
+      if (!result.changes) throw new Error('候选资料不存在。')
+    } else if (action.kind === 'entity-candidate-confirm') {
+      const result = db.prepare(`
+        UPDATE story_entity_candidates
+        SET status = 'confirmed', linked_entity_id = ?, updated_at = ?
+        WHERE project_id = ? AND id = ?
+      `).run(action.linkedEntityId, timestamp, projectId, action.entityId)
+      if (!result.changes) throw new Error('候选资料不存在。')
+    } else {
+      throw new Error('不支持的世界状态操作。')
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 export function applyStateDelta(
   db: DatabaseSync,
   projectId: string,
@@ -587,6 +1197,11 @@ export function applyStateDelta(
   db.exec('BEGIN')
   try {
   const timestamp = now()
+
+  // 新人物/势力只进入项目级候选收件箱，不直接污染正式设定库。
+  for (const candidate of normalizedDelta.entity_candidates ?? []) {
+    upsertEntityCandidate(db, projectId, chapterIndex, candidate, timestamp)
+  }
 
   // Character state updates
   for (const charUpdate of normalizedDelta.characters_updated) {
@@ -647,16 +1262,22 @@ export function applyStateDelta(
     if (existingRow) {
       const updates: string[] = []
       const params: (string | number | null)[] = []
+      const previousStatus = String(existingRow.current_status ?? '')
+      const previousLifecycle = String(existingRow.lifecycle_status ?? 'active') as RelationshipLifecycleStatus
 
       if (relUpdate.status_change) {
         updates.push('current_status = ?')
         params.push(relUpdate.status_change.to)
       }
-      if (relUpdate.new_tension_points?.length) {
-        const existing = parseJson<string[]>(existingRow.tension_points_json, [])
+      if (relUpdate.new_tension_points?.length || relUpdate.resolved_tension_points?.length) {
+        const resolved = new Set(relUpdate.resolved_tension_points ?? [])
+        const existing = parseJson<string[]>(existingRow.tension_points_json, []).filter((item) => !resolved.has(item))
         updates.push('tension_points_json = ?')
-        params.push(JSON.stringify([...new Set([...existing, ...relUpdate.new_tension_points])]))
+        params.push(JSON.stringify([...new Set([...existing, ...(relUpdate.new_tension_points ?? [])])]))
       }
+      const nextLifecycle = relUpdate.lifecycle ?? 'active'
+      updates.push('lifecycle_status = ?', "lifecycle_managed_by = 'auto'")
+      params.push(nextLifecycle)
       updates.push('last_interaction_chapter = ?')
       params.push(chapterIndex)
       updates.push('updated_at = ?')
@@ -668,19 +1289,43 @@ export function applyStateDelta(
           `UPDATE story_relationships SET ${updates.join(', ')} WHERE project_id = ? AND relationship_id = ?`
         ).run(...params)
       }
+      appendRelationshipHistory(db, {
+        projectId,
+        relationshipId: relUpdate.relationship_id,
+        chapterIndex,
+        fromStatus: relUpdate.status_change?.from || previousStatus,
+        toStatus: relUpdate.status_change?.to || previousStatus,
+        pivotEvent: relUpdate.status_change?.pivot_event,
+        tensionsAdded: relUpdate.new_tension_points,
+        tensionsResolved: relUpdate.resolved_tension_points,
+        lifecycleFrom: previousLifecycle,
+        lifecycleTo: nextLifecycle,
+        source: 'ai'
+      })
     } else if (relUpdate.participants) {
       db.prepare(`
         INSERT OR IGNORE INTO story_relationships
           (id, project_id, relationship_id, participant_a, participant_b, current_status,
-           tension_points_json, trajectory, last_interaction_chapter, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           tension_points_json, trajectory, last_interaction_chapter, lifecycle_status,
+           lifecycle_managed_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', ?)
       `).run(
         uid(), projectId, relUpdate.relationship_id,
         relUpdate.participants[0], relUpdate.participants[1],
         relUpdate.status_change?.to ?? '初识',
         JSON.stringify(relUpdate.new_tension_points ?? []),
-        '', chapterIndex, timestamp
+        '', chapterIndex, relUpdate.lifecycle ?? 'active', timestamp
       )
+      appendRelationshipHistory(db, {
+        projectId,
+        relationshipId: relUpdate.relationship_id,
+        chapterIndex,
+        toStatus: relUpdate.status_change?.to ?? '初识',
+        pivotEvent: relUpdate.status_change?.pivot_event,
+        tensionsAdded: relUpdate.new_tension_points,
+        lifecycleTo: relUpdate.lifecycle ?? 'active',
+        source: 'ai'
+      })
     }
   }
 
@@ -690,8 +1335,8 @@ export function applyStateDelta(
       db.prepare(`
         INSERT OR IGNORE INTO story_foreshadowing
           (id, project_id, foreshadowing_id, type, description, status, planted_chapter,
-           planted_method, payoff_chapter, clues_json, connections_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, '[]', '[]', ?)
+           planted_method, payoff_chapter, clues_json, connections_json, status_managed_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, '[]', '[]', 'auto', ?)
       `).run(
         uid(), projectId, planted.id, planted.type, planted.description,
         chapterIndex, planted.method, planted.payoff_chapter ?? null, timestamp
@@ -711,7 +1356,7 @@ export function applyStateDelta(
         }
         db.prepare(`
           UPDATE story_foreshadowing
-          SET clues_json = ?, status = 'advanced', updated_at = ?
+          SET clues_json = ?, status = 'advanced', status_managed_by = 'auto', updated_at = ?
           WHERE project_id = ? AND foreshadowing_id = ?
         `).run(JSON.stringify(clues), timestamp, projectId, advanced.id)
       }
@@ -720,9 +1365,16 @@ export function applyStateDelta(
     for (const resolved of normalizedDelta.foreshadowing_delta.resolved) {
       db.prepare(`
         UPDATE story_foreshadowing
-        SET status = 'resolved', resolved_chapter = ?, updated_at = ?
+        SET status = 'resolved', resolved_chapter = ?, status_managed_by = 'auto', updated_at = ?
         WHERE project_id = ? AND foreshadowing_id = ?
       `).run(chapterIndex, timestamp, projectId, resolved.id)
+    }
+    for (const abandoned of normalizedDelta.foreshadowing_delta.abandoned) {
+      db.prepare(`
+        UPDATE story_foreshadowing
+        SET status = 'abandoned', resolved_chapter = NULL, status_managed_by = 'auto', updated_at = ?
+        WHERE project_id = ? AND foreshadowing_id = ?
+      `).run(timestamp, projectId, abandoned.id)
     }
   }
 
@@ -740,6 +1392,8 @@ export function applyStateDelta(
       timestamp
     )
   }
+
+  refreshAutomaticRelationshipLifecycle(db, projectId, chapterIndex)
 
   db.exec('COMMIT')
   } catch (error) {
@@ -766,6 +1420,19 @@ export function buildStoryStateContext(
     recentTimeline: getRecentTimeline(db, projectId, 5),
     worldRules: getWorldRules(db, projectId),
     activeClocks: getActiveClocks(db, projectId)
+  }
+}
+
+/** 面向管理界面的完整状态视图；写作上下文仍只注入活跃伏笔和活跃关系。 */
+export function buildStoryStateOverview(db: DatabaseSync, projectId: string): StoryStateOverview {
+  const currentChapterIndex = getLatestStoryChapterIndex(db, projectId)
+  refreshAutomaticRelationshipLifecycle(db, projectId, currentChapterIndex)
+  const context = buildStoryStateContext(db, projectId, [])
+  return {
+    ...context,
+    allForeshadowing: getAllForeshadowing(db, projectId),
+    allRelationships: getRelationships(db, projectId, undefined, true, true),
+    entityCandidates: getEntityCandidates(db, projectId)
   }
 }
 

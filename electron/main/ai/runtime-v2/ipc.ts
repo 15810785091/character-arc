@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import {
   ASSISTANT_IPC_CHANNELS,
+  type AssistantTurnPreview,
   type AssistantEventPush,
   type AssistantSession,
   type StageAcceptRequest,
@@ -25,6 +26,7 @@ import {
   type SurfaceDefinition,
   type TurnEvent,
   type TurnCancelRequest,
+  type TurnPreviewRequest,
   type TurnSendRequest,
   type TurnTruncateRequest,
   type TurnTruncateResult
@@ -57,6 +59,7 @@ export type ResolveTurnExecutionPlan = (params: {
   runtimePlan: AssistantRuntimePlan
   evidenceLedger: EvidenceLedger
   skillPlan: { mode: SkillUseMode; items: SkillExecutionReceiptItem[] }
+  preview: AssistantTurnPreview
 }>
 
 /** 外部依赖注入。 */
@@ -308,6 +311,34 @@ function registerSessionHandlers(): void {
 // ============================================================================
 
 function registerTurnHandlers(): void {
+  ipcMain.handle(
+    ASSISTANT_IPC_CHANNELS.TURN_PREVIEW,
+    async (_event, payload: TurnPreviewRequest): Promise<AssistantTurnPreview> => {
+      const resolvePlan = requireDep('resolveTurnExecutionPlan')
+      const cm = await getConversation()
+      const persistedSession = payload.sessionId ? cm.getSession(payload.sessionId) : null
+      if (payload.sessionId && !persistedSession) {
+        throw new Error(`session not found: ${payload.sessionId}`)
+      }
+      const now = new Date().toISOString()
+      const session: AssistantSession = persistedSession ?? {
+        id: `preview:${payload.projectId}:${payload.surface.id}`,
+        projectId: payload.projectId,
+        surfaceId: payload.surface.id,
+        scopeRef: payload.scopeRef,
+        title: '本轮预览',
+        createdAt: now,
+        updatedAt: now
+      }
+      const request: TurnSendRequest = {
+        ...payload,
+        sessionId: session.id
+      }
+      const plan = await resolvePlan({ session, surface: payload.surface, request })
+      return plan.preview
+    }
+  )
+
   ipcMain.handle(
     ASSISTANT_IPC_CHANNELS.TURN_SEND,
     async (event, payload: TurnSendRequest) => {

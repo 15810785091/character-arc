@@ -64,7 +64,7 @@ export function migrateKnowledgeDocumentScopes(db: DatabaseSync): void {
     SELECT id, project_id AS projectId, source_type AS sourceType, source_label AS sourceLabel,
       metadata_json AS metadataJson, created_at AS createdAt
     FROM knowledge_documents
-    WHERE source_type IN ('workflow-document', 'canon-fact', 'chapter-summary')
+    WHERE source_type IN ('workflow-document', 'canon-fact', 'audit-report', 'chapter-summary')
   `).all() as KnowledgeDocumentRow[]
   const nearbyRuns = db.prepare(`
     SELECT DISTINCT p.title, r.task

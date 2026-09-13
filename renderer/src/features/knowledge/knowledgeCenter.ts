@@ -71,6 +71,7 @@ export interface ReferenceAssetLibrary {
 const PROJECT_SOURCE_TYPES = new Set<KnowledgeDocumentSourceType>([
   'workflow-document',
   'canon-fact',
+  'audit-report',
   'chapter-summary'
 ])
 
@@ -79,6 +80,7 @@ const KNOWLEDGE_SOURCE_TYPE_LABELS: Record<KnowledgeDocumentSourceType, string> 
   'reference-chunk': '拆书分块',
   'workflow-document': '创作记忆',
   'canon-fact': '设定事实',
+  'audit-report': '审计报告',
   'chapter-summary': '章节摘要'
 }
 

@@ -6,6 +6,7 @@ export type KnowledgeDocumentSourceType =
   | 'reference-chunk'
   | 'workflow-document'
   | 'canon-fact'
+  | 'audit-report'
   | 'chapter-summary'
 
 export type WorkspaceKnowledgeDocument = {

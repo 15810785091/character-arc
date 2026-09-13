@@ -18,11 +18,13 @@ import AssistantMessages from '@/components/assistantV2/AssistantMessages.vue'
 import AssistantComposer from '@/components/assistantV2/AssistantComposer.vue'
 import StagedChangesView from '@/components/assistantV2/StagedChangesView.vue'
 import ChapterFirstDraftDialog from './ChapterFirstDraftDialog.vue'
-import { useChapterFirstDraft, type FirstDraftConfig } from './useChapterFirstDraft'
+import { type useChapterFirstDraft, type FirstDraftConfig } from './useChapterFirstDraft'
 
 const props = defineProps<{
   /** 由父级 ChapterWorkspace 持有的 assistant 实例，避免 v-if 销毁时丢失暂存状态 */
   assistant: ReturnType<typeof useAssistant>
+  /** 与批量队列共用同一个初稿执行器，保证单章和批量模式规则一致。 */
+  draft: ReturnType<typeof useChapterFirstDraft>
 }>()
 
 const emit = defineEmits<{
@@ -49,7 +51,7 @@ const activeTab = ref<PanelTab>('chat')
 const activeMode = ref<ChapterMode>('chat')
 const isCommitting = ref(false)
 
-const draft = useChapterFirstDraft()
+const draft = props.draft
 
 const modeOptions: Array<{ id: ChapterMode; label: string; description: string }> = [
   { id: 'chat', label: '对话', description: '问答、分析、建议' },
@@ -124,6 +126,11 @@ function sendWithMode(): void {
   })
 }
 
+function previewWithMode(): void {
+  const selectionHintSuffix = hasSelection.value ? ':with-selection' : ''
+  void assistant.preview({ intentHint: `chapter-assistant-v2:${activeMode.value}${selectionHintSuffix}` })
+}
+
 function notifyTruncate(result: TurnTruncateResult, action: '撤回' | '重新分叉'): void {
   if (result.keptCommitted > 0) {
     message.warning(`${action}完成，但 ${result.keptCommitted} 项已写回项目的改动未回滚`)
@@ -191,14 +198,18 @@ function sendPromptWithAction(action: string, selectionText: string): void {
   })
 }
 
-function triggerDraft(config?: FirstDraftConfig): void {
-  void handleDraft(config)
+function triggerDraft(config?: FirstDraftConfig): Promise<boolean> {
+  return handleDraft(config)
 }
 
-
-async function handleDraft(config?: FirstDraftConfig): Promise<void> {
-  if (!config) return
-  try { await draft.start(config) } catch (error) { message.error(error instanceof Error ? error.message : 'AI 初稿生成失败') }
+async function handleDraft(config?: FirstDraftConfig): Promise<boolean> {
+  if (!config) return false
+  try {
+    return await draft.start(config)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : 'AI 初稿生成失败')
+    return false
+  }
 }
 
 function handlePanelMouseDown(event: MouseEvent): void {
@@ -334,7 +345,7 @@ defineExpose({ sendPrompt, sendPromptWithAction, triggerDraft })
 
       <div v-else class="starter">
         <div class="starter-head">
-          <div class="starter-kicker">Chapter Assistant v2</div>
+          <div class="starter-kicker">章节创作助理</div>
           <h3>从哪里开始？</h3>
           <p>{{ currentMode.description }}</p>
         </div>
@@ -384,7 +395,10 @@ defineExpose({ sendPrompt, sendPromptWithAction, triggerDraft })
         :mode-label="hasSelection ? selectionHint : currentMode.label"
         :skill-policy="assistant.skillPolicy.value"
         :available-skills="assistant.availableSkills.value"
+        :turn-preview="assistant.turnPreview.value"
+        :is-previewing="assistant.isPreviewing.value"
         @send="sendWithMode"
+        @preview="previewWithMode"
         @cancel="assistant.cancel()"
         @edit-last="assistant.startEditingLastTurn()"
         @clear-restored="assistant.clearRestoredDraft()"

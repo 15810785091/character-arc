@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton } from 'naive-ui'
-import { AlertTriangle, RotateCcw } from 'lucide-vue-next'
+import { AlertTriangle, ChevronLeft, ChevronRight, Maximize2, Minimize2, RotateCcw } from 'lucide-vue-next'
 import type { StagedChange, StagedChangeCommitResult } from '@shared/assistant-runtime'
 
 const props = defineProps<{
@@ -51,6 +51,8 @@ const visiblePendingIds = computed(() =>
 
 const expandedIds = ref<Set<string>>(new Set())
 const reviewingId = ref<string | null>(null)
+const isReviewMaximized = ref(false)
+const reviewDisplayMode = ref<'diff' | 'compare'>('diff')
 const reviewingChange = computed(() =>
   props.changes.find((c) => c.id === reviewingId.value) ?? null
 )
@@ -158,15 +160,57 @@ function reviewChange(id: string): void {
 }
 
 function closeReview(): void {
+  isReviewMaximized.value = false
   reviewingId.value = null
 }
 
+function openReviewWorkspace(): void {
+  const first = reviewingChange.value ?? filtered.value[0]
+  if (!first) return
+  reviewingId.value = first.id
+  isReviewMaximized.value = true
+}
+
+function toggleReviewMaximized(): void {
+  isReviewMaximized.value = !isReviewMaximized.value
+}
+
+const reviewingIndex = computed(() => {
+  const index = filtered.value.findIndex((item) => item.id === reviewingChange.value?.id)
+  return index < 0 ? 0 : index
+})
+
+function reviewPrevious(): void {
+  if (!filtered.value.length) return
+  const previous = filtered.value[reviewingIndex.value - 1] ?? filtered.value[filtered.value.length - 1]
+  reviewingId.value = previous?.id ?? null
+}
+
 function reviewNext(): void {
-  if (!reviewingChange.value) return
-  const currentIndex = filtered.value.findIndex((item) => item.id === reviewingChange.value?.id)
-  const next = filtered.value[currentIndex + 1] ?? filtered.value[0]
+  if (!reviewingChange.value || !filtered.value.length) return
+  const next = filtered.value[reviewingIndex.value + 1] ?? filtered.value[0]
   reviewingId.value = next?.id ?? null
 }
+
+function handleReviewKeyboard(event: KeyboardEvent): void {
+  if (!reviewingChange.value) return
+  if (event.key === 'Escape') {
+    if (isReviewMaximized.value) isReviewMaximized.value = false
+    else closeReview()
+    return
+  }
+  if (!isReviewMaximized.value || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+  if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+    event.preventDefault()
+    reviewPrevious()
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+    event.preventDefault()
+    reviewNext()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleReviewKeyboard))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleReviewKeyboard))
 
 function diffBlocks(change: StagedChange): Array<{ type: 'del' | 'add' | 'context'; line: string }> {
   return diffRows(change.before, change.after)
@@ -183,13 +227,47 @@ function bindTarget(changeId: string, entityId: string): void {
 function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   return props.commitResults?.find((result) => result.changeId === changeId)
 }
+
+function impactWarnings(change: StagedChange): string[] {
+  const value = change.entityPayload?.__impactWarnings
+  return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : []
+}
 </script>
 
 <template>
   <div class="stage">
-    <div v-if="reviewingChange" class="review">
+    <Teleport to="body" :disabled="!isReviewMaximized">
+    <div v-if="reviewingChange" class="review-shell" :class="{ maximized: isReviewMaximized }">
+      <aside v-if="isReviewMaximized" class="review-nav">
+        <div class="review-nav-head">
+          <strong>暂存变更</strong>
+          <span>{{ reviewingIndex + 1 }} / {{ filtered.length }}</span>
+        </div>
+        <button
+          v-for="change in filtered"
+          :key="change.id"
+          type="button"
+          :class="{ active: change.id === reviewingChange.id }"
+          @click="reviewingId = change.id"
+        >
+          <span class="kind" :class="change.kind">{{ kindLabel(change.kind) }}</span>
+          <strong>{{ change.entityTitle }}</strong>
+          <small>{{ statusLabel(change.status) }}</small>
+        </button>
+      </aside>
+      <div class="review">
       <div class="review-head">
-        <button class="back-btn" type="button" @click="closeReview">‹ 返回</button>
+        <div class="review-toolbar">
+          <button class="back-btn" type="button" @click="closeReview">‹ 返回暂存列表</button>
+          <div class="review-toolbar-actions">
+            <button type="button" :class="{ active: reviewDisplayMode === 'diff' }" @click="reviewDisplayMode = 'diff'">差异</button>
+            <button type="button" :class="{ active: reviewDisplayMode === 'compare' }" @click="reviewDisplayMode = 'compare'">对照</button>
+            <button type="button" :title="isReviewMaximized ? '退出放大审阅' : '放大审阅'" @click="toggleReviewMaximized">
+              <Minimize2 v-if="isReviewMaximized" :size="15" />
+              <Maximize2 v-else :size="15" />
+            </button>
+          </div>
+        </div>
         <div class="review-title">
           <span class="kind" :class="reviewingChange.kind">{{ kindLabel(reviewingChange.kind) }}</span>
           <strong>{{ reviewingChange.entityTitle }}</strong>
@@ -210,6 +288,14 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
           <span>原因</span>
           <strong>{{ reviewingChange.reason }}</strong>
         </div>
+      </div>
+
+      <div v-if="impactWarnings(reviewingChange).length" class="impact-warning review-impact" role="alert">
+        <div class="impact-warning-head">
+          <AlertTriangle :size="15" />
+          <strong>确认前请检查关联影响</strong>
+        </div>
+        <p v-for="warning in impactWarnings(reviewingChange)" :key="warning">{{ warning }}</p>
       </div>
 
       <div
@@ -254,7 +340,7 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
           </div>
         </div>
 
-        <div class="review-section">
+        <div v-if="reviewDisplayMode === 'diff'" class="review-section">
           <div class="review-section-head">差异摘要</div>
           <div v-if="diffBlocks(reviewingChange).length" class="review-diff">
             <div
@@ -270,7 +356,7 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
           <div v-else class="review-empty">没有检测到文本差异。</div>
         </div>
 
-        <div class="compare">
+        <div v-else class="compare">
           <div class="compare-col before">
             <div class="compare-head">修改前</div>
             <pre>{{ reviewingChange.before || '（空）' }}</pre>
@@ -283,6 +369,10 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
       </div>
 
       <div class="review-actions">
+        <NButton size="small" quaternary @click="reviewPrevious">
+          <template #icon><ChevronLeft :size="14" /></template>
+          上一项
+        </NButton>
         <NButton
           size="small"
           :type="reviewingChange.status === 'accepted' ? 'primary' : 'default'"
@@ -300,14 +390,39 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
         </NButton>
         <NButton size="small" quaternary @click="reviewNext">
           下一项
+          <template #icon><ChevronRight :size="14" /></template>
+        </NButton>
+        <span class="review-position">{{ reviewingIndex + 1 }} / {{ filtered.length }}</span>
+        <NButton
+          v-if="isReviewMaximized"
+          size="small"
+          type="primary"
+          :loading="props.isCommitting"
+          :disabled="acceptedCount === 0 || props.isBusy || props.isCommitting"
+          @click="emit('commit')"
+        >
+          {{ acceptedCount > 0 ? `写回 ${acceptedCount} 项` : '写回已确认' }}
         </NButton>
       </div>
     </div>
+    </div>
+    </Teleport>
 
-    <template v-else>
+    <template v-if="!reviewingChange || isReviewMaximized">
     <div class="head">
       <div class="title-row">
-        <div class="title">暂存变更</div>
+        <div class="title-with-action">
+          <div class="title">暂存变更</div>
+          <button
+            type="button"
+            class="open-workspace-btn"
+            title="放大审阅"
+            :disabled="filtered.length === 0"
+            @click="openReviewWorkspace"
+          >
+            <Maximize2 :size="14" />
+          </button>
+        </div>
         <div class="count">
           <strong>{{ pendingCount }}</strong> 待审阅
           <span class="sep">·</span>
@@ -345,6 +460,14 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
         </div>
         <div class="action-line" :class="'action-' + c.action">{{ actionLabel(c.action) }}</div>
         <div class="reason">{{ c.reason }}</div>
+
+        <div v-if="impactWarnings(c).length" class="impact-warning" role="alert">
+          <div class="impact-warning-head">
+            <AlertTriangle :size="14" />
+            <strong>有 {{ impactWarnings(c).length }} 项关联影响</strong>
+          </div>
+          <p v-for="warning in impactWarnings(c)" :key="warning">{{ warning }}</p>
+        </div>
 
         <div v-if="commitResult(c.id)?.ok === false" class="commit-issue" role="alert">
           <div class="commit-issue-head">
@@ -471,11 +594,123 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   background: var(--arc-bg-surface);
   border-left: 1px solid var(--arc-border);
 }
+.review-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--arc-bg-surface);
+}
+.review-shell.maximized {
+  position: fixed;
+  inset: 18px;
+  z-index: 4000;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--arc-border-strong);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24), 0 0 0 100vmax rgba(15, 23, 42, 0.36);
+}
+.review-nav {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px;
+  border-right: 1px solid var(--arc-border);
+  background: var(--arc-bg-weak);
+}
+.review-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 5px 12px;
+  color: var(--arc-text-primary);
+  font-size: 13px;
+}
+.review-nav-head span {
+  color: var(--arc-text-hint);
+  font-family: var(--v2-mono, monospace);
+  font-size: 11px;
+}
+.review-nav > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  padding: 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--arc-text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.review-nav > button:hover,
+.review-nav > button.active {
+  border-color: var(--arc-border);
+  background: var(--arc-bg-surface);
+}
+.review-nav > button.active {
+  border-color: var(--v2-accent-line, var(--arc-primary));
+  box-shadow: var(--arc-shadow-sm);
+}
+.review-nav > button strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.review-nav > button small {
+  color: var(--arc-text-hint);
+  font-size: 10px;
+}
 .review {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.review-shell.maximized .review {
+  min-width: 0;
+  border-left: none;
+}
+.review-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.review-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.review-toolbar-actions button,
+.open-workspace-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--arc-border);
+  border-radius: 6px;
+  background: var(--arc-bg-surface);
+  color: var(--arc-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+.review-toolbar-actions button:hover,
+.review-toolbar-actions button.active,
+.open-workspace-btn:hover:not(:disabled) {
+  border-color: var(--arc-primary);
+  color: var(--arc-primary);
+  background: var(--arc-primary-soft);
+}
+.open-workspace-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 .review-head {
   padding: 14px 16px 12px;
@@ -547,6 +782,29 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.impact-warning {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.28);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--arc-text-secondary);
+}
+.impact-warning.review-impact {
+  margin: 12px 16px 0;
+}
+.impact-warning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b45309;
+  font-size: 12px;
+}
+.impact-warning p {
+  margin: 5px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
 }
 .target-box {
   border: 1px solid var(--arc-border);
@@ -670,6 +928,11 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   flex-direction: column;
   gap: 12px;
 }
+.review-shell.maximized .compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
 .compare-col {
   min-width: 0;
 }
@@ -701,6 +964,13 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   flex-wrap: wrap;
   gap: 8px;
 }
+.review-position {
+  margin-left: auto;
+  align-self: center;
+  color: var(--arc-text-hint);
+  font-family: var(--v2-mono, monospace);
+  font-size: 11px;
+}
 .head {
   padding: 16px 20px 12px;
   display: flex;
@@ -712,6 +982,21 @@ function commitResult(changeId: string): StagedChangeCommitResult | undefined {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.title-with-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+@media (max-width: 900px) {
+  .review-shell.maximized {
+    inset: 8px;
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+  .review-shell.maximized .compare {
+    display: flex;
+  }
 }
 .title {
   font-size: 13px;

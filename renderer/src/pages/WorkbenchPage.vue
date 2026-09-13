@@ -1,21 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from 'vue'
 import {
-  BookMarked,
-  BookOpenText,
   ChevronLeft,
-  FileCheck2,
   FileText,
-  Globe2,
   LayoutDashboard,
-  Lightbulb,
-  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Settings,
   Sparkles,
-  Users,
+  LibraryBig,
   GitMerge
 } from 'lucide-vue-next'
 import { NButton, NInput } from 'naive-ui'
@@ -28,10 +22,9 @@ import { resolveNovelLengthLabel } from '@/features/wizard/projectGenres'
 import { useAppStore } from '@/stores/app'
 import NovelWorkflowPanel from '@/components/NovelWorkflowPanel.vue'
 import OverviewPanel from '@/components/OverviewPanel.vue'
-import GlobalAssistantPage from '@/components/GlobalAssistantPage.vue'
 import GlobalAssistantV2Panel from '@/components/assistantV2/GlobalAssistantV2Panel.vue'
-import GlobalAssistantV2Page from '@/components/assistantV2/GlobalAssistantV2Page.vue'
 import ProjectKnowledgePanel from '@/components/ProjectKnowledgePanel.vue'
+import StoryBiblePanel from '@/components/StoryBiblePanel.vue'
 import WorldviewPanel from '@/components/WorldviewPanel.vue'
 import CharactersPanel from '@/components/CharactersPanel.vue'
 import RelationsPanel from '@/components/RelationsPanel.vue'
@@ -49,6 +42,7 @@ const isSidebarOpen = ref(true)
 // 当前视口宽度，用于响应式判断侧边栏模式
 const viewportWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const isGlobalAssistantOpen = ref(false)
+const isGlobalAssistantExpanded = ref(false)
 const GLOBAL_ASSISTANT_WIDTH_STORAGE_KEY = 'arc-global-assistant-width'
 const GLOBAL_ASSISTANT_OPEN_STORAGE_KEY = 'arc-global-assistant-open'
 const GLOBAL_ASSISTANT_DEFAULT_WIDTH = 420
@@ -61,6 +55,7 @@ const isDraggingGlobalAssistant = ref(false)
 const panelSearch = reactive<Record<string, string>>({
   workflow: '',
   overview: '',
+  'story-data': '',
   deconstruction: '',
   'project-knowledge': '',
   world: '',
@@ -78,15 +73,10 @@ const searchKeyword = ref(panelSearch[appStore.activePanel] ?? '')
 
 const sidebarItemPresentation = {
   overview: { description: '掌握项目进度与全局信息', icon: LayoutDashboard, color: '#8b5cf6' },
-  characters: { description: '维护人物卡、关系与成长线索', icon: Users, color: '#ec4899' },
-  relations: { description: '维护势力结构、人物关系与成员归属', icon: Network, color: '#6b7280' },
-  world: { description: '沉淀世界规则、地点与设定条目', icon: Globe2, color: '#06b6d4' },
   outline: { description: '组织卷宗结构与关键情节点', icon: GitMerge, color: '#10b981' },
-  threads: { description: '追踪未收尾伏笔与活跃剧情线', icon: BookMarked, color: '#6366f1' },
+  'story-data': { description: '统一维护人物、世界、关系与知识', icon: LibraryBig, color: '#0ea5a4' },
   chapters: { description: '进入正文草稿与章节推进流程', icon: FileText, color: '#3b82f6' },
-  inspiration: { description: '收集标题、桥段、转折与人物动机', icon: Lightbulb, color: '#f59e0b' },
-  'project-knowledge': { description: '一致性审计与从已有章节补录状态', icon: FileCheck2, color: '#14b8a6' },
-  'global-assistant-v2': { description: 'Runtime v2 · 多轮对话 + 暂存变更审阅', icon: Sparkles, color: '#0d7d5a' }
+  'global-assistant': { description: '跨模块读取资料并暂存修改', icon: Sparkles, color: '#14b8a6' },
 } satisfies Record<WorkbenchMenuId, { description: string; icon: Component; color: string }>
 
 const sidebarItemCatalog = WORKBENCH_MENU_DEFINITIONS.map((item) => ({
@@ -110,11 +100,6 @@ const hiddenPanelLabels: Partial<Record<PanelName, string>> = {
 const normalizedSearch = computed(() => searchKeyword.value.trim())
 // 是否处于搜索模式（关键词非空时显示搜索结果面板）
 const isSearchMode = computed(() => normalizedSearch.value.length > 0)
-
-// 全局AI助手为整页助手，自带搜索/会话能力，隐藏工作台 header 的搜索与 AI助手 入口
-const isGlobalAssistantPanel = computed(() =>
-  appStore.activePanel === 'global-assistant' || appStore.activePanel === 'global-assistant-v2'
-)
 
 // 顶部面包屑中显示的当前视图标签
 const activeViewLabel = computed(() => {
@@ -146,6 +131,12 @@ const projectMeta = computed(() =>
 const sidebarBadgeMap = computed<Record<string, string | null>>(() => ({
   workflow: null,
   overview: null,
+  'story-data': String(
+    appStore.worldviewEntries.length
+    + appStore.characters.length
+    + appStore.organizations.length
+    + appStore.plotThreads.length
+  ),
   world: String(appStore.worldviewEntries.length),
   characters: String(appStore.characters.length),
   relations: String(appStore.organizations.length + appStore.characterRelationships.length),
@@ -177,8 +168,8 @@ const effectiveGlobalAssistantWidth = computed(() =>
   Math.max(GLOBAL_ASSISTANT_MIN_WIDTH, Math.min(maxGlobalAssistantWidth.value, globalAssistantWidth.value))
 )
 const globalAssistantDockStyle = computed(() => ({
-  width: `${effectiveGlobalAssistantWidth.value}px`,
-  maxWidth: shouldOverlayAssistant.value ? 'calc(100vw - 20px)' : '100%'
+  width: isGlobalAssistantExpanded.value ? '100%' : `${effectiveGlobalAssistantWidth.value}px`,
+  maxWidth: isGlobalAssistantExpanded.value || shouldOverlayAssistant.value ? '100%' : '760px'
 }))
 
 function clampGlobalAssistantWidth(width: number): number {
@@ -194,6 +185,21 @@ function toggleSidebar(): void {
   isSidebarOpen.value = !isSidebarOpen.value
 }
 
+function isSidebarItemActive(menuId: WorkbenchMenuId): boolean {
+  return menuId === 'global-assistant'
+    ? isGlobalAssistantOpen.value
+    : appStore.activePanel === menuId
+}
+
+function handleSidebarItemClick(menuId: WorkbenchMenuId): void {
+  if (menuId === 'global-assistant') {
+    isGlobalAssistantOpen.value = true
+    localStorage.setItem(GLOBAL_ASSISTANT_OPEN_STORAGE_KEY, '1')
+    return
+  }
+  appStore.setPanel(menuId)
+}
+
 function toggleGlobalAssistant(): void {
   isGlobalAssistantOpen.value = !isGlobalAssistantOpen.value
   localStorage.setItem(GLOBAL_ASSISTANT_OPEN_STORAGE_KEY, isGlobalAssistantOpen.value ? '1' : '0')
@@ -201,7 +207,12 @@ function toggleGlobalAssistant(): void {
 
 function closeGlobalAssistant(): void {
   isGlobalAssistantOpen.value = false
+  isGlobalAssistantExpanded.value = false
   localStorage.setItem(GLOBAL_ASSISTANT_OPEN_STORAGE_KEY, '0')
+}
+
+function toggleGlobalAssistantExpanded(): void {
+  isGlobalAssistantExpanded.value = !isGlobalAssistantExpanded.value
 }
 
 /**
@@ -286,6 +297,9 @@ onMounted(() => {
   if (savedOpen === '1') {
     isGlobalAssistantOpen.value = true
   }
+  if (appStore.activePanel === 'global-assistant' || appStore.activePanel === 'global-assistant-v2') {
+    appStore.setPanel('overview')
+  }
   window.addEventListener('resize', syncViewportState)
 })
 
@@ -297,9 +311,6 @@ onBeforeUnmount(() => {
 watch(
   () => appStore.activePanel,
   (panel) => {
-    if (panel === 'global-assistant' || panel === 'global-assistant-v2') {
-      closeGlobalAssistant()
-    }
     searchKeyword.value = panelSearch[panel] ?? ''
   },
   { immediate: true }
@@ -344,11 +355,11 @@ watch(searchKeyword, (value) => {
             :key="item.id"
             type="button"
             class="sidebar-item"
-            :class="{ active: appStore.activePanel === item.id }"
+            :class="{ active: isSidebarItemActive(item.id) }"
             :title="item.label"
-            @click="appStore.setPanel(item.id)"
+            @click="handleSidebarItemClick(item.id)"
           >
-            <span class="sidebar-icon-shell" :style="{ color: appStore.activePanel === item.id ? undefined : item.color }">
+            <span class="sidebar-icon-shell" :style="{ color: isSidebarItemActive(item.id) ? undefined : item.color }">
               <component :is="item.icon" :size="18" class="sidebar-icon" />
             </span>
             <span v-if="shouldRenderSidebarLabels" class="sidebar-copy">
@@ -390,7 +401,7 @@ watch(searchKeyword, (value) => {
           <span class="active-crumb">{{ activeViewLabel }}</span>
         </div>
 
-        <div v-if="!isGlobalAssistantPanel" class="header-tools">
+        <div class="header-tools">
           <n-input
             v-model:value="searchKeyword"
             class="search-input"
@@ -407,7 +418,7 @@ watch(searchKeyword, (value) => {
             round
             :type="isGlobalAssistantOpen ? 'primary' : 'default'"
             class="assistant-toggle"
-            title="打开全局助手 v2"
+            title="打开全局助手"
             @click="toggleGlobalAssistant"
           >
             AI助手
@@ -415,9 +426,9 @@ watch(searchKeyword, (value) => {
         </div>
       </header>
 
-      <div class="workspace-body" :class="{ 'workspace-body--flush': isGlobalAssistantPanel }">
+      <div class="workspace-body" :class="{ 'assistant-immersive': isGlobalAssistantExpanded }">
         <div class="workspace-body-shell">
-          <div class="workspace-body-main arc-scrollbar" :class="{ 'workspace-body-main--flush': isGlobalAssistantPanel }">
+          <div v-show="!isGlobalAssistantExpanded" class="workspace-body-main arc-scrollbar">
             <!-- 搜索模式下显示全局搜索结果面板 -->
             <SearchResultsPanel
               v-if="isSearchMode"
@@ -428,6 +439,7 @@ watch(searchKeyword, (value) => {
             <!-- 非搜索模式下根据当前激活的面板渲染对应组件 -->
             <NovelWorkflowPanel v-else-if="appStore.activePanel === 'workflow'" key="workflow" />
             <OverviewPanel v-else-if="appStore.activePanel === 'overview'" key="overview" :search-query="normalizedSearch" />
+            <StoryBiblePanel v-else-if="appStore.activePanel === 'story-data'" key="story-data" :search-query="normalizedSearch" />
             <ProjectKnowledgePanel v-else-if="appStore.activePanel === 'project-knowledge'" key="project-knowledge" />
             <WorldviewPanel v-else-if="appStore.activePanel === 'world'" key="world" :search-query="normalizedSearch" />
             <CharactersPanel v-else-if="appStore.activePanel === 'characters'" key="characters" :search-query="normalizedSearch" />
@@ -435,14 +447,12 @@ watch(searchKeyword, (value) => {
             <InspirationPanel v-else-if="appStore.activePanel === 'inspiration'" key="inspiration" :search-query="normalizedSearch" />
             <OutlinePanel v-else-if="appStore.activePanel === 'outline'" key="outline" :search-query="normalizedSearch" />
             <PlotThreadsPanel v-else-if="appStore.activePanel === 'threads'" key="threads" :search-query="normalizedSearch" />
-            <GlobalAssistantPage v-else-if="appStore.activePanel === 'global-assistant'" key="global-assistant" />
-            <GlobalAssistantV2Page v-else-if="appStore.activePanel === 'global-assistant-v2'" key="global-assistant-v2" />
             <SettingsPanel v-else key="settings" />
           </div>
 
           <Transition name="assistant-backdrop">
             <button
-              v-if="isGlobalAssistantOpen && shouldOverlayAssistant"
+              v-if="isGlobalAssistantOpen && shouldOverlayAssistant && !isGlobalAssistantExpanded"
               type="button"
               class="assistant-backdrop"
               aria-label="关闭全局助手"
@@ -454,10 +464,11 @@ watch(searchKeyword, (value) => {
             <div
               v-if="isGlobalAssistantOpen"
               class="workspace-assistant-shell"
-              :class="{ overlay: shouldOverlayAssistant }"
+              :class="{ overlay: shouldOverlayAssistant && !isGlobalAssistantExpanded, expanded: isGlobalAssistantExpanded }"
               :style="globalAssistantDockStyle"
             >
               <div
+                v-if="!isGlobalAssistantExpanded"
                 class="assistant-resize-handle"
                 :class="{ dragging: isDraggingGlobalAssistant }"
                 title="拖拽调整宽度，双击恢复默认"
@@ -467,7 +478,9 @@ watch(searchKeyword, (value) => {
               <GlobalAssistantV2Panel
                 class="workspace-assistant-dock"
                 :active-view-label="activeViewLabel"
+                :expanded="isGlobalAssistantExpanded"
                 @close="closeGlobalAssistant"
+                @toggle-expand="toggleGlobalAssistantExpanded"
               />
             </div>
           </Transition>
@@ -834,6 +847,10 @@ watch(searchKeyword, (value) => {
   padding: 0;
 }
 
+.workspace-body.assistant-immersive {
+  padding: 0;
+}
+
 .workspace-body-shell {
   position: relative;
   display: flex;
@@ -885,6 +902,16 @@ watch(searchKeyword, (value) => {
   border-radius: 20px 0 0 20px;
   border-right: none;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
+}
+
+.workspace-assistant-shell.expanded {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .workspace-assistant-dock {

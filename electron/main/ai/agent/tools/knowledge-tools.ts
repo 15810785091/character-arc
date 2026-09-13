@@ -7,6 +7,7 @@ const VALID_SOURCE_TYPES = new Set<AiKnowledgeDocumentDraft['sourceType']>([
   'reference-chunk',
   'workflow-document',
   'canon-fact',
+  'audit-report',
   'chapter-summary'
 ])
 
@@ -63,7 +64,7 @@ export function createKnowledgeTools(opts: KnowledgeToolFactoryOptions): Tool[] 
           sourceType: {
             type: 'string',
             description:
-              '文档类型：reference-summary（拆书总纲，整体风格 / 故事线 / 人物架构）、reference-chunk（拆书分块，单段或单章的具体桥段分析）、workflow-document（创作记忆）、canon-fact（项目设定事实）、chapter-summary（章节摘要）。',
+              '文档类型：reference-summary（拆书总纲）、reference-chunk（拆书分块）、workflow-document（创作记忆）、canon-fact（项目设定事实）、audit-report（审计报告，不参与事实注入）、chapter-summary（章节摘要）。',
             enum: Array.from(VALID_SOURCE_TYPES)
           },
           sourceLabel: {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
-import { Boxes, Clock, FileCheck2, GitBranch, History, MapPin, Pause, Play, RefreshCw, ScrollText, Sparkles, Users } from 'lucide-vue-next'
+import { Boxes, Building2, Clock, FileCheck2, GitBranch, History, Inbox, MapPin, Pause, Play, RefreshCw, ScrollText, Sparkles, UserPlus, Users } from 'lucide-vue-next'
 import {
   NAlert,
   NButton,
@@ -9,6 +9,7 @@ import {
   NCollapse,
   NCollapseItem,
   NEmpty,
+  NInput,
   NInputNumber,
   NModal,
   NScrollbar,
@@ -16,6 +17,8 @@ import {
   NSpace,
   NSpin,
   NTag,
+  NTabPane,
+  NTabs,
   NVirtualList,
   useDialog,
   useMessage
@@ -49,11 +52,12 @@ const isBackfillPausing = computed(() => backfillProgress.value?.status === 'pau
 const isBackfillControlsLocked = computed(() => isStartingBackfill.value || isBackfillingState.value)
 const backfillStatuses = ref<CharacterArcBackfillChapterStatus[]>([])
 const isLoadingBackfillStatuses = ref(false)
-const backfillMode = ref<'pending' | 'failed' | 'range'>('pending')
+const backfillMode = ref<'pending' | 'failed' | 'range' | 'all'>('pending')
 const rangeStart = ref(1)
 const rangeEnd = ref(1)
 const storyState = ref<StoryState | null>(null)
 const isLoadingStoryState = ref(false)
+const updatingStoryStateKey = ref('')
 const projectRenderKey = computed(() => appStore.currentProject?.id ?? '')
 
 const characterNameMap = computed(
@@ -81,8 +85,8 @@ const storyStateSummary = computed(() => {
   if (!s) return null
   return {
     characters: s.characterStates.length,
-    foreshadowing: s.activeForeshadowing.length,
-    relationships: s.relationships.length,
+    foreshadowing: s.allForeshadowing.length,
+    relationships: s.allRelationships.length,
     timeline: s.recentTimeline.length,
     worldRules: s.worldRules.length,
     clocks: s.activeClocks.length
@@ -96,14 +100,50 @@ const hasStoryState = computed(() => {
 })
 
 const storyCharacterStates = computed<StoryState['characterStates']>(() => storyState.value?.characterStates ?? [])
-const storyForeshadowing = computed<StoryState['activeForeshadowing']>(() => storyState.value?.activeForeshadowing ?? [])
-const storyRelationships = computed<StoryState['relationships']>(() => storyState.value?.relationships ?? [])
+const foreshadowingView = ref<'active' | 'resolved' | 'abandoned'>('active')
+const relationshipView = ref<'active' | 'dormant' | 'archived'>('active')
+const storyForeshadowing = computed<StoryState['allForeshadowing']>(() => storyState.value?.allForeshadowing ?? [])
+const displayedStoryForeshadowing = computed(() => storyForeshadowing.value.filter((item) => (
+  foreshadowingView.value === 'active'
+    ? item.status === 'active' || item.status === 'advanced'
+    : item.status === foreshadowingView.value
+)))
+const foreshadowingCounts = computed(() => ({
+  active: storyForeshadowing.value.filter((item) => item.status === 'active' || item.status === 'advanced').length,
+  resolved: storyForeshadowing.value.filter((item) => item.status === 'resolved').length,
+  abandoned: storyForeshadowing.value.filter((item) => item.status === 'abandoned').length
+}))
+const storyRelationships = computed<StoryState['allRelationships']>(() => storyState.value?.allRelationships ?? [])
+const displayedStoryRelationships = computed(() => storyRelationships.value.filter((item) => item.lifecycleStatus === relationshipView.value))
+const relationshipCounts = computed(() => ({
+  active: storyRelationships.value.filter((item) => item.lifecycleStatus === 'active').length,
+  dormant: storyRelationships.value.filter((item) => item.lifecycleStatus === 'dormant').length,
+  archived: storyRelationships.value.filter((item) => item.lifecycleStatus === 'archived').length
+}))
 const storyTimeline = computed<StoryState['recentTimeline']>(() => storyState.value?.recentTimeline ?? [])
 const storyWorldRules = computed<StoryState['worldRules']>(() => storyState.value?.worldRules ?? [])
 const storyClocks = computed<StoryState['activeClocks']>(() => storyState.value?.activeClocks ?? [])
+const entityCandidateView = ref<'pending' | 'observing' | 'ignored' | 'confirmed'>('pending')
+const entityCandidates = computed(() => storyState.value?.entityCandidates ?? [])
+const displayedEntityCandidates = computed(() => entityCandidates.value.filter((item) => item.status === entityCandidateView.value))
+const entityCandidateCounts = computed(() => ({
+  pending: entityCandidates.value.filter((item) => item.status === 'pending').length,
+  observing: entityCandidates.value.filter((item) => item.status === 'observing').length,
+  ignored: entityCandidates.value.filter((item) => item.status === 'ignored').length,
+  confirmed: entityCandidates.value.filter((item) => item.status === 'confirmed').length
+}))
+const editingEntityCandidate = ref<CharacterArcEntityCandidate | null>(null)
+const entityCandidateForm = ref({ name: '', roleOrType: '', description: '', mergeTargetId: '' })
+const entityCandidateMergeOptions = computed(() => {
+  const candidate = editingEntityCandidate.value
+  if (!candidate) return []
+  return candidate.kind === 'character'
+    ? appStore.characters.map((item) => ({ label: `${item.name} · ${item.role || '角色'}`, value: item.id }))
+    : appStore.organizations.map((item) => ({ label: `${item.name} · ${item.type || '组织'}`, value: item.id }))
+})
 const visibleStoryCharacterStates = useIncrementalList(storyCharacterStates, projectRenderKey, { initialSize: 24, batchSize: 24 })
-const visibleStoryForeshadowing = useIncrementalList(storyForeshadowing, projectRenderKey, { initialSize: 24, batchSize: 24 })
-const visibleStoryRelationships = useIncrementalList(storyRelationships, projectRenderKey, { initialSize: 24, batchSize: 24 })
+const visibleStoryForeshadowing = useIncrementalList(displayedStoryForeshadowing, projectRenderKey, { initialSize: 24, batchSize: 24 })
+const visibleStoryRelationships = useIncrementalList(displayedStoryRelationships, projectRenderKey, { initialSize: 24, batchSize: 24 })
 const visibleStoryTimeline = useIncrementalList(storyTimeline, projectRenderKey, { initialSize: 24, batchSize: 24 })
 const visibleStoryWorldRules = useIncrementalList(storyWorldRules, projectRenderKey, { initialSize: 24, batchSize: 24 })
 const visibleStoryClocks = useIncrementalList(storyClocks, projectRenderKey, { initialSize: 24, batchSize: 24 })
@@ -132,6 +172,108 @@ async function loadStoryState(): Promise<void> {
       isLoadingStoryState.value = false
     }
   }
+}
+
+async function applyStoryStateAction(action: Record<string, unknown>, actionKey: string, successText: string): Promise<void> {
+  const projectId = appStore.currentProject?.id
+  if (!projectId || updatingStoryStateKey.value) return
+  updatingStoryStateKey.value = actionKey
+  try {
+    const response = await window.characterArc.updateStoryStateLifecycle(toIpcPayload({ projectId, action }))
+    if (!response.success || !response.result) throw new Error(response.error ?? '更新世界状态失败')
+    if (appStore.currentProject?.id === projectId) storyState.value = response.result
+    message.success(successText)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '更新世界状态失败')
+  } finally {
+    updatingStoryStateKey.value = ''
+  }
+}
+
+function setForeshadowingStatus(item: CharacterArcForeshadowing, status: CharacterArcForeshadowing['status']): void {
+  void applyStoryStateAction(
+    { kind: 'foreshadowing-status', entityId: item.foreshadowingId, status },
+    `foreshadowing:${item.foreshadowingId}`,
+    status === 'resolved' ? '伏笔已归入「已回收」' : status === 'abandoned' ? '伏笔已归入「已废弃」' : '伏笔已恢复为活跃状态'
+  )
+}
+
+function setRelationshipLifecycle(item: CharacterArcRelationship, status: CharacterArcRelationship['lifecycleStatus'] | 'auto'): void {
+  void applyStoryStateAction(
+    { kind: 'relationship-lifecycle', entityId: item.relationshipId, status },
+    `relationship:${item.relationshipId}`,
+    status === 'active' || status === 'auto' ? '角色关系已恢复为活跃并交回自动管理' : status === 'dormant' ? '角色关系已休眠' : '角色关系已归档'
+  )
+}
+
+function resolveRelationshipTension(item: CharacterArcRelationship, tensionPoint: string): void {
+  void applyStoryStateAction(
+    { kind: 'relationship-resolve-tension', entityId: item.relationshipId, tensionPoint },
+    `tension:${item.relationshipId}:${tensionPoint}`,
+    '关系张力已标记为解决，记录保留在变化历史中'
+  )
+}
+
+function openEntityCandidate(candidate: CharacterArcEntityCandidate): void {
+  editingEntityCandidate.value = candidate
+  entityCandidateForm.value = {
+    name: candidate.name,
+    roleOrType: candidate.roleOrType,
+    description: candidate.description,
+    mergeTargetId: ''
+  }
+}
+
+function updateEntityCandidateStatus(candidate: CharacterArcEntityCandidate, status: 'observing' | 'ignored'): void {
+  void applyStoryStateAction(
+    { kind: 'entity-candidate-status', entityId: candidate.id, status },
+    `candidate:${candidate.id}`,
+    status === 'ignored' ? '候选资料已忽略，后续重复扫描不会再次提醒' : '候选资料已恢复到观察中'
+  )
+}
+
+async function confirmEntityCandidate(): Promise<void> {
+  const candidate = editingEntityCandidate.value
+  const name = entityCandidateForm.value.name.trim()
+  if (!candidate || !name) {
+    message.warning('请填写准确名称。')
+    return
+  }
+  let linkedEntityId = entityCandidateForm.value.mergeTargetId
+  if (!linkedEntityId) {
+    if (candidate.kind === 'character') {
+      linkedEntityId = appStore.createCharacter({
+        name,
+        role: entityCandidateForm.value.roleOrType.trim() || '待补充定位',
+        description: entityCandidateForm.value.description.trim() || `正文中发现的新人物，首次证据见${formatChapterRef(candidate.evidence[0]?.chapterIndex)}。`,
+        tags: [{ label: '正文发现', tone: 'success' }]
+      })
+    } else {
+      linkedEntityId = appStore.createOrganization({
+        name,
+        type: entityCandidateForm.value.roleOrType.trim() || '待补充类型',
+        description: entityCandidateForm.value.description.trim() || `正文中发现的新势力，首次证据见${formatChapterRef(candidate.evidence[0]?.chapterIndex)}。`,
+        motto: '待补充'
+      })
+    }
+    appStore.flushWorkspaceSync()
+  }
+  await applyStoryStateAction(
+    { kind: 'entity-candidate-confirm', entityId: candidate.id, linkedEntityId },
+    `candidate:${candidate.id}`,
+    entityCandidateForm.value.mergeTargetId ? '候选资料已合并到现有词条' : '候选资料已建立正式词条'
+  )
+  editingEntityCandidate.value = null
+}
+
+function formatRelationshipHistory(entry: CharacterArcRelationship['history'][number]): string {
+  const details: string[] = []
+  if (entry.fromStatus || entry.toStatus) details.push(`${entry.fromStatus || '未记录'} → ${entry.toStatus || entry.fromStatus}`)
+  if (entry.pivotEvent) details.push(entry.pivotEvent)
+  if (entry.tensionsAdded.length) details.push(`新增张力：${entry.tensionsAdded.join('、')}`)
+  if (entry.tensionsResolved.length) details.push(`解决张力：${entry.tensionsResolved.join('、')}`)
+  if (entry.lifecycleTo && entry.lifecycleFrom !== entry.lifecycleTo) details.push(`生命周期：${entry.lifecycleFrom || '新建'} → ${entry.lifecycleTo}`)
+  return details.join('；') || '状态已更新'
 }
 
 async function loadBackfillStatuses(): Promise<void> {
@@ -235,7 +377,10 @@ watch(
 
 const auditReports = computed(() =>
   appStore.knowledgeDocuments
-    .filter((doc) => doc.sourceType === 'canon-fact' && doc.sourceLabel === 'story-deep-audit')
+    .filter((doc) =>
+      doc.sourceType === 'audit-report'
+      || (doc.sourceType === 'canon-fact' && doc.sourceLabel === 'story-deep-audit')
+    )
     .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
 )
 
@@ -243,7 +388,13 @@ const latestAuditReport = computed(() => auditReports.value[0] ?? null)
 
 const assistantKnowledgeDocuments = computed(() =>
   appStore.knowledgeDocuments
-    .filter((doc) => isProjectKnowledgeSource(doc.sourceType) && !(doc.sourceType === 'canon-fact' && doc.sourceLabel === 'story-deep-audit'))
+    .filter((doc) =>
+      isProjectKnowledgeSource(doc.sourceType)
+      && doc.sourceType !== 'audit-report'
+      && !(doc.sourceType === 'canon-fact' && doc.sourceLabel === 'story-deep-audit')
+      && doc.sourceLabel !== 'chapter-draft-checkpoint'
+      && doc.sourceLabel !== 'chapter-writing-contract'
+    )
     .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
 )
 const visibleAuditReports = useIncrementalList(auditReports, projectRenderKey, { initialSize: 24, batchSize: 24 })
@@ -257,7 +408,8 @@ const validChapterCount = computed(
 const backfillModeOptions = [
   { label: '未完成章节', value: 'pending' },
   { label: '仅失败章节', value: 'failed' },
-  { label: '指定章节范围', value: 'range' }
+  { label: '指定范围重新扫描', value: 'range' },
+  { label: '全书强制重扫（高消耗）', value: 'all' }
 ]
 
 const backfillStatusMeta: Record<CharacterArcBackfillChapterStatus['status'], {
@@ -297,8 +449,41 @@ const backfillStatusCounts = computed(() => {
   return counts
 })
 
+const latestAuditChapterIndex = computed(() => {
+  const raw = latestAuditReport.value?.metadata?.auditTargetChapterIndex
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : null
+})
+
+const chaptersSinceAudit = computed(() => {
+  if (latestAuditChapterIndex.value === null) return validChapterCount.value
+  return Math.max(0, validChapterCount.value - latestAuditChapterIndex.value)
+})
+
+const auditRecommended = computed(() =>
+  validChapterCount.value >= 5
+  && (!latestAuditReport.value || chaptersSinceAudit.value >= 10)
+)
+
+const knowledgeHealth = computed(() => {
+  if (backfillStatusCounts.value.failed > 0) {
+    return { type: 'error' as const, title: '知识状态需要处理', detail: `${backfillStatusCounts.value.failed} 章同步失败或中断，建议先补录失败章节。` }
+  }
+  if (backfillStatusCounts.value.pending > 0) {
+    return { type: 'warning' as const, title: '知识状态尚未完全同步', detail: `${backfillStatusCounts.value.pending} 章待补录或正文已变化。章节定稿后会自动同步，也可在下方手动补录。` }
+  }
+  if (entityCandidateCounts.value.pending > 0) {
+    return { type: 'warning' as const, title: '发现待建档资料', detail: `${entityCandidateCounts.value.pending} 个新人物或势力已达到建档条件，请在“待建档资料”中确认、合并或忽略。` }
+  }
+  if (auditRecommended.value) {
+    return { type: 'info' as const, title: '结构化状态健康，建议做一次里程碑审计', detail: '深度审计只在完成一卷、重大剧情转折或累计约 10 章时按需执行，不必每章调用 AI。' }
+  }
+  return { type: 'success' as const, title: '项目知识状态健康', detail: '章节状态会在定稿时自动同步；日常创作不需要反复执行深度审计。' }
+})
+
 const selectedBackfillChapterIds = computed(() => {
   const statuses = backfillStatuses.value
+  if (backfillMode.value === 'all') return statuses.map((status) => status.chapterId)
   if (backfillMode.value === 'failed') {
     return statuses
       .filter((status) => status.status === 'failed' || status.status === 'running')
@@ -311,8 +496,6 @@ const selectedBackfillChapterIds = computed(() => {
       .filter((status) => (
         status.chapterNumber >= start
         && status.chapterNumber <= end
-        && status.status !== 'success'
-        && status.status !== 'skipped'
       ))
       .map((status) => status.chapterId)
   }
@@ -386,7 +569,7 @@ async function runStoryDeepAudit(): Promise<void> {
       id: `knowledge-story-audit-${Date.now()}`,
       projectId: project.id,
       title,
-      sourceType: 'canon-fact',
+      sourceType: 'audit-report',
       sourceLabel: 'story-deep-audit',
       content: reportContent,
       summary: reportContent.slice(0, 220),
@@ -426,7 +609,9 @@ function runStateBackfill(): void {
 
   dialog.warning({
     title: '从已有章节补录状态库',
-    content: `将对 ${selectedCount} 个章节逐章提取状态变更，预计调用 AI ${selectedCount} 次。已完成且正文未变化的章节不会重复扫描。确认继续？`,
+    content: backfillMode.value === 'all'
+      ? `将强制重新扫描全书 ${selectedCount} 个章节，预计至少调用 AI ${selectedCount} 次；异常结果还可能自动重试。这通常只用于状态库严重错乱后的重建，消耗较高。确认继续？`
+      : `将对 ${selectedCount} 个章节逐章提取状态变更，预计调用 AI ${selectedCount} 次。已完成且正文未变化的章节不会重复扫描。确认继续？`,
     positiveText: '开始补录',
     negativeText: '取消',
     onPositiveClick: () => {
@@ -439,7 +624,9 @@ function runStateBackfill(): void {
 
 async function runStateBackfillTask(projectId: string): Promise<void> {
   try {
-    const selection = backfillMode.value === 'failed'
+    const selection = backfillMode.value === 'all'
+      ? { mode: 'all' as const }
+      : backfillMode.value === 'failed'
       ? { mode: 'failed' as const }
       : backfillMode.value === 'range'
         ? { mode: 'custom' as const, chapterIds: selectedBackfillChapterIds.value }
@@ -552,16 +739,20 @@ watch(
     <header class="pk-header">
       <div class="pk-header-left">
         <strong>项目知识库</strong>
-        <span class="pk-header-subtitle">沉淀项目级一致性审计与结构化世界状态</span>
+        <span class="pk-header-subtitle">定稿自动同步结构化状态，深度审计只在里程碑按需执行</span>
       </div>
     </header>
+
+    <n-alert :type="knowledgeHealth.type" :title="knowledgeHealth.title" :bordered="false">
+      {{ knowledgeHealth.detail }}
+    </n-alert>
 
     <div class="pk-grid">
       <n-card class="pk-card" size="small">
         <template #header>
           <div class="pk-card-title">
             <FileCheck2 :size="16" />
-            <span>一致性审计</span>
+            <span>里程碑深度审计</span>
           </div>
         </template>
         <template #header-extra>
@@ -573,13 +764,12 @@ watch(
             @click="runStoryDeepAudit"
           >
             <template #icon><Sparkles :size="14" /></template>
-            {{ isRunningStoryAudit ? '审计中...' : '执行审计' }}
+            {{ isRunningStoryAudit ? '审计中...' : '按需审计' }}
           </n-button>
         </template>
 
         <p class="pk-card-desc">
-          基于当前世界状态（角色状态、伏笔、关系、时间线、世界规则）对项目进行整体一致性审计。
-          报告会归档到下方"审计历史"列表，可随时查看。
+          适合完结一卷、重大转折或累计约 10 章时检查。报告会独立归档，不会当作小说设定反向注入正文。
         </p>
 
         <div class="pk-card-meta">
@@ -658,6 +848,12 @@ watch(
             </label>
           </template>
         </div>
+        <n-alert v-if="backfillMode === 'all'" type="warning" :show-icon="false" class="pk-card-progress">
+          全书重扫会覆盖每章的补录结果并产生大量 AI 调用。日常使用请选择“未完成章节”。
+        </n-alert>
+        <n-alert v-else-if="backfillMode === 'range'" type="info" :show-icon="false" class="pk-card-progress">
+          指定范围会重新扫描其中已完成的章节，可用于给旧章节补充人物与势力候选；不必重扫全书。
+        </n-alert>
 
         <div class="pk-card-meta">
           <n-tag size="small" :bordered="false">可补录章节 {{ validChapterCount }}</n-tag>
@@ -706,6 +902,87 @@ watch(
       </n-card>
     </div>
 
+    <section class="pk-candidate-inbox">
+      <div class="pk-history-head">
+        <div class="pk-history-title">
+          <Inbox :size="16" />
+          <strong>待建档资料</strong>
+          <n-tag v-if="entityCandidateCounts.pending" size="tiny" :bordered="false" type="warning">
+            {{ entityCandidateCounts.pending }} 项待确认
+          </n-tag>
+        </div>
+        <n-button
+          size="small"
+          quaternary
+          :loading="isLoadingStoryState"
+          :disabled="!appStore.currentProject || isLoadingStoryState"
+          @click="loadStoryState"
+        >
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </n-button>
+      </div>
+      <p class="pk-card-desc">
+        章节定稿和状态补录会顺带发现有准确名称的新人物与势力。首次出现通常先观察，跨章再次出现或明确影响剧情时才进入待确认；不会自动写入正式设定。
+      </p>
+      <n-tabs v-model:value="entityCandidateView" type="line" size="small" animated>
+        <n-tab-pane name="pending" :tab="`待确认 ${entityCandidateCounts.pending}`" />
+        <n-tab-pane name="observing" :tab="`观察中 ${entityCandidateCounts.observing}`" />
+        <n-tab-pane name="ignored" :tab="`已忽略 ${entityCandidateCounts.ignored}`" />
+        <n-tab-pane name="confirmed" :tab="`已建档 ${entityCandidateCounts.confirmed}`" />
+      </n-tabs>
+      <n-empty
+        v-if="!displayedEntityCandidates.length"
+        size="small"
+        :description="entityCandidateView === 'pending' ? '暂时没有需要确认的新人物或势力。' : '这个分类中暂无候选资料。'"
+      />
+      <div v-else class="pk-candidate-list">
+        <article v-for="candidate in displayedEntityCandidates" :key="candidate.id" class="pk-candidate-card">
+          <div class="pk-candidate-main">
+            <div class="pk-state-item-title">
+              <UserPlus v-if="candidate.kind === 'character'" :size="14" />
+              <Building2 v-else :size="14" />
+              <strong>{{ candidate.name }}</strong>
+              <n-tag size="tiny" :bordered="false" :type="candidate.kind === 'character' ? 'info' : 'success'">
+                {{ candidate.kind === 'character' ? '人物' : '势力' }}
+              </n-tag>
+              <n-tag size="tiny" :bordered="false">可信度 {{ candidate.confidence }}%</n-tag>
+            </div>
+            <p v-if="candidate.roleOrType || candidate.description" class="pk-candidate-description">
+              <strong v-if="candidate.roleOrType">{{ candidate.roleOrType }}</strong>
+              {{ candidate.description }}
+            </p>
+            <div class="pk-candidate-signals">
+              <span>出现 {{ candidate.chapterCount }} 章</span>
+              <span v-if="candidate.hasDialogue">有独立对白</span>
+              <span v-if="candidate.plotImpact">影响剧情</span>
+              <span v-if="candidate.explicitImportance">明确重要</span>
+              <span v-if="candidate.aliases.length">别名：{{ candidate.aliases.join('、') }}</span>
+            </div>
+            <details v-if="candidate.evidence.length" class="pk-candidate-evidence">
+              <summary>查看正文依据（{{ candidate.evidence.length }}）</summary>
+              <blockquote v-for="evidence in candidate.evidence" :key="`${evidence.chapterIndex}-${evidence.quote}`">
+                <strong>{{ formatChapterRef(evidence.chapterIndex) }}</strong>
+                <span>{{ evidence.quote }}</span>
+              </blockquote>
+            </details>
+          </div>
+          <div class="pk-candidate-actions">
+            <template v-if="candidate.status === 'pending' || candidate.status === 'observing'">
+              <n-button size="small" type="primary" @click="openEntityCandidate(candidate)">
+                {{ candidate.status === 'pending' ? '确认建档' : '提前建档' }}
+              </n-button>
+              <n-button size="small" @click="updateEntityCandidateStatus(candidate, 'ignored')">忽略</n-button>
+            </template>
+            <n-button v-else-if="candidate.status === 'ignored'" size="small" @click="updateEntityCandidateStatus(candidate, 'observing')">
+              恢复观察
+            </n-button>
+            <n-tag v-else size="small" :bordered="false" type="success">已关联正式词条</n-tag>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section class="pk-state">
       <div class="pk-history-head">
         <div class="pk-history-title">
@@ -728,7 +1005,7 @@ watch(
       </div>
 
       <p class="pk-card-desc">
-        章节定稿或状态补录时沉淀的结构化世界状态。这些数据会在 AI 写作/审校时作为上下文注入，保证前后一致。
+        章节定稿或状态补录时沉淀的结构化世界状态。活跃数据会注入 AI 上下文；关系连续 12 章无互动自动休眠、30 章无互动自动归档，再次发生互动会自动恢复。归档数据不会删除，可随时查看或手动恢复。
       </p>
 
       <n-spin :show="isLoadingStoryState">
@@ -763,10 +1040,16 @@ watch(
             </div>
           </n-collapse-item>
 
-          <n-collapse-item v-if="storyState?.activeForeshadowing.length" name="foreshadowing">
+          <n-collapse-item v-if="storyState?.allForeshadowing.length" name="foreshadowing">
             <template #header>
-              <div class="pk-state-head"><ScrollText :size="14" /><span>伏笔</span><n-tag size="tiny" :bordered="false">{{ storyState.activeForeshadowing.length }}</n-tag></div>
+              <div class="pk-state-head"><ScrollText :size="14" /><span>伏笔档案</span><n-tag size="tiny" :bordered="false">{{ storyState.allForeshadowing.length }}</n-tag></div>
             </template>
+            <n-tabs v-model:value="foreshadowingView" type="line" size="small" animated>
+              <n-tab-pane name="active" :tab="`活跃 ${foreshadowingCounts.active}`" />
+              <n-tab-pane name="resolved" :tab="`已回收 ${foreshadowingCounts.resolved}`" />
+              <n-tab-pane name="abandoned" :tab="`已废弃 ${foreshadowingCounts.abandoned}`" />
+            </n-tabs>
+            <n-empty v-if="!visibleStoryForeshadowing.length" size="small" description="这个分类中暂无伏笔。" />
             <div class="pk-state-list">
               <div v-for="fs in visibleStoryForeshadowing" :key="fs.foreshadowingId" class="pk-state-item">
                 <div class="pk-state-item-title">
@@ -774,6 +1057,7 @@ watch(
                   <n-tag size="tiny" :bordered="false" :type="(foreshadowingStatusMeta[fs.status] ?? foreshadowingStatusMeta.active).type">
                     {{ (foreshadowingStatusMeta[fs.status] ?? { label: fs.status }).label }}
                   </n-tag>
+                  <n-tag size="tiny" :bordered="false">{{ fs.statusManagedBy === 'auto' ? '自动管理' : '手动调整' }}</n-tag>
                 </div>
                 <div class="pk-state-fields">
                   <span v-if="fs.type">类型：{{ fs.type }}</span>
@@ -787,26 +1071,63 @@ watch(
                     {{ formatChapterRef(clue.chapter) }}：{{ clue.clue }}
                   </n-tag>
                 </div>
+                <div class="pk-state-actions">
+                  <template v-if="fs.status === 'active' || fs.status === 'advanced'">
+                    <n-button size="tiny" secondary type="success" :loading="updatingStoryStateKey === `foreshadowing:${fs.foreshadowingId}`" @click="setForeshadowingStatus(fs, 'resolved')">标记回收</n-button>
+                    <n-button size="tiny" quaternary :disabled="Boolean(updatingStoryStateKey)" @click="setForeshadowingStatus(fs, 'abandoned')">标记废弃</n-button>
+                  </template>
+                  <n-button v-else size="tiny" secondary :loading="updatingStoryStateKey === `foreshadowing:${fs.foreshadowingId}`" @click="setForeshadowingStatus(fs, 'active')">恢复活跃</n-button>
+                </div>
               </div>
             </div>
           </n-collapse-item>
 
-          <n-collapse-item v-if="storyState?.relationships.length" name="relationships">
+          <n-collapse-item v-if="storyState?.allRelationships.length" name="relationships">
             <template #header>
-              <div class="pk-state-head"><GitBranch :size="14" /><span>角色关系</span><n-tag size="tiny" :bordered="false">{{ storyState.relationships.length }}</n-tag></div>
+              <div class="pk-state-head"><GitBranch :size="14" /><span>角色关系档案</span><n-tag size="tiny" :bordered="false">{{ storyState.allRelationships.length }}</n-tag></div>
             </template>
+            <n-tabs v-model:value="relationshipView" type="line" size="small" animated>
+              <n-tab-pane name="active" :tab="`活跃 ${relationshipCounts.active}`" />
+              <n-tab-pane name="dormant" :tab="`休眠 ${relationshipCounts.dormant}`" />
+              <n-tab-pane name="archived" :tab="`归档 ${relationshipCounts.archived}`" />
+            </n-tabs>
+            <n-empty v-if="!visibleStoryRelationships.length" size="small" description="这个分类中暂无角色关系。" />
             <div class="pk-state-list">
               <div v-for="rel in visibleStoryRelationships" :key="rel.relationshipId" class="pk-state-item">
                 <div class="pk-state-item-title">
                   <strong>{{ resolveCharacterName(rel.participantA) }} ⇄ {{ resolveCharacterName(rel.participantB) }}</strong>
                   <n-tag size="tiny" :bordered="false" type="info">{{ rel.currentStatus }}</n-tag>
+                  <n-tag v-if="rel.lifecycleStatus !== 'active'" size="tiny" :bordered="false" :type="rel.lifecycleStatus === 'dormant' ? 'warning' : 'default'">
+                    {{ rel.lifecycleStatus === 'dormant' ? '休眠' : '已归档' }}
+                  </n-tag>
+                  <n-tag size="tiny" :bordered="false">{{ rel.lifecycleManagedBy === 'auto' ? '自动管理' : '手动调整' }}</n-tag>
                 </div>
                 <div class="pk-state-fields">
                   <span v-if="rel.trajectory">走向：{{ rel.trajectory }}</span>
                   <span v-if="rel.lastInteractionChapter !== null">最近互动：{{ formatChapterRef(rel.lastInteractionChapter) }}</span>
                 </div>
                 <div v-if="rel.tensionPoints.length" class="pk-state-tags">
-                  <n-tag v-for="tp in rel.tensionPoints" :key="`t-${tp}`" size="tiny" :bordered="false" type="error">张力：{{ tp }}</n-tag>
+                  <span v-for="tp in rel.tensionPoints" :key="`t-${tp}`" class="pk-tension-row">
+                    <n-tag size="tiny" :bordered="false" type="error">张力：{{ tp }}</n-tag>
+                    <n-button size="tiny" text type="success" :loading="updatingStoryStateKey === `tension:${rel.relationshipId}:${tp}`" @click="resolveRelationshipTension(rel, tp)">已解决</n-button>
+                  </span>
+                </div>
+                <details v-if="rel.history.length" class="pk-state-history">
+                  <summary>关系变化记录（{{ rel.history.length }}）</summary>
+                  <div v-for="entry in rel.history" :key="entry.id" class="pk-state-history-row">
+                    <span>{{ entry.chapterIndex === null ? '手动记录' : formatChapterRef(entry.chapterIndex) }}</span>
+                    <p>{{ formatRelationshipHistory(entry) }}</p>
+                  </div>
+                </details>
+                <div class="pk-state-actions">
+                  <template v-if="rel.lifecycleStatus === 'active'">
+                    <n-button size="tiny" secondary :loading="updatingStoryStateKey === `relationship:${rel.relationshipId}`" @click="setRelationshipLifecycle(rel, 'dormant')">休眠</n-button>
+                    <n-button size="tiny" quaternary :disabled="Boolean(updatingStoryStateKey)" @click="setRelationshipLifecycle(rel, 'archived')">归档</n-button>
+                  </template>
+                  <template v-else>
+                    <n-button size="tiny" secondary type="success" :loading="updatingStoryStateKey === `relationship:${rel.relationshipId}`" @click="setRelationshipLifecycle(rel, 'auto')">恢复活跃</n-button>
+                    <n-button v-if="rel.lifecycleStatus === 'dormant'" size="tiny" quaternary :disabled="Boolean(updatingStoryStateKey)" @click="setRelationshipLifecycle(rel, 'archived')">归档</n-button>
+                  </template>
                 </div>
               </div>
             </div>
@@ -871,6 +1192,51 @@ watch(
         </n-collapse>
       </n-spin>
     </section>
+
+    <n-modal
+      :show="Boolean(editingEntityCandidate)"
+      preset="card"
+      class="pk-candidate-modal"
+      title="确认候选资料"
+      :bordered="false"
+      @update:show="(show) => { if (!show) editingEntityCandidate = null }"
+    >
+      <div v-if="editingEntityCandidate" class="pk-candidate-form">
+        <n-alert type="info" :bordered="false" :show-icon="false">
+          确认后才会写入正式{{ editingEntityCandidate.kind === 'character' ? '人物' : '势力' }}库。名称可以先校正，也可以合并到已有词条。
+        </n-alert>
+        <label>
+          <span>准确名称</span>
+          <n-input v-model:value="entityCandidateForm.name" placeholder="请输入正文中的准确专名" />
+        </label>
+        <label>
+          <span>{{ editingEntityCandidate.kind === 'character' ? '角色定位' : '势力类型' }}</span>
+          <n-input v-model:value="entityCandidateForm.roleOrType" placeholder="可以暂时留空" />
+        </label>
+        <label>
+          <span>简介</span>
+          <n-input v-model:value="entityCandidateForm.description" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="根据正文证据整理，确认前可修改" />
+        </label>
+        <label>
+          <span>合并到已有词条（可选）</span>
+          <n-select
+            v-model:value="entityCandidateForm.mergeTargetId"
+            clearable
+            filterable
+            :options="entityCandidateMergeOptions"
+            placeholder="若是别名或重复项，请选择已有词条"
+          />
+        </label>
+      </div>
+      <template #footer>
+        <div class="pk-candidate-modal-actions">
+          <n-button @click="editingEntityCandidate = null">取消</n-button>
+          <n-button type="primary" :loading="updatingStoryStateKey.startsWith('candidate:')" @click="confirmEntityCandidate">
+            {{ entityCandidateForm.mergeTargetId ? '确认合并' : '创建正式词条' }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
 
     <section class="pk-history">
       <div class="pk-history-head">
@@ -1155,6 +1521,114 @@ watch(
   background: var(--arc-bg-mix);
 }
 
+.pk-candidate-inbox {
+  padding: 16px;
+  border: 1px solid var(--arc-border);
+  border-radius: 10px;
+  background: var(--arc-bg-surface);
+}
+
+.pk-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pk-candidate-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--arc-border);
+  border-radius: 9px;
+  background: var(--arc-bg-mix);
+}
+
+.pk-candidate-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.pk-candidate-description {
+  margin: 7px 0 0;
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.pk-candidate-description strong {
+  margin-right: 8px;
+  color: var(--arc-text-primary);
+}
+
+.pk-candidate-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 7px;
+  color: var(--arc-text-hint);
+  font-size: 11px;
+}
+
+.pk-candidate-evidence {
+  margin-top: 9px;
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+}
+
+.pk-candidate-evidence summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.pk-candidate-evidence blockquote {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--arc-primary);
+  background: var(--arc-bg-surface);
+  line-height: 1.55;
+}
+
+.pk-candidate-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.pk-candidate-modal {
+  width: min(680px, calc(100vw - 40px));
+}
+
+.pk-candidate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pk-candidate-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+}
+
+.pk-candidate-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .pk-candidate-card {
+    flex-direction: column;
+  }
+}
+
 .pk-state-item-title {
   display: flex;
   align-items: center;
@@ -1185,6 +1659,45 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.pk-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.pk-tension-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pk-state-history {
+  color: var(--arc-text-secondary);
+  font-size: 12px;
+}
+
+.pk-state-history summary {
+  cursor: pointer;
+  color: var(--arc-text-secondary);
+  user-select: none;
+}
+
+.pk-state-history-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 0 0 12px;
+}
+
+.pk-state-history-row > span {
+  color: var(--arc-text-hint);
+}
+
+.pk-state-history-row > p {
+  margin: 0;
 }
 
 .pk-history-head {

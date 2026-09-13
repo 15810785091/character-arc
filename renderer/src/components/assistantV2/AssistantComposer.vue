@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { NButton, NCheckbox, NPopover, NRadio, NRadioGroup } from 'naive-ui'
-import { ChevronDown, Sparkles, Square, Undo2, X } from 'lucide-vue-next'
-import type { SkillUseMode, SkillUsePolicy } from '@shared/assistant-runtime'
+import { ChevronDown, ClipboardList, LoaderCircle, Sparkles, Square, Undo2, X } from 'lucide-vue-next'
+import type { AssistantTurnPreview, SkillUseMode, SkillUsePolicy } from '@shared/assistant-runtime'
 import type { ProjectSkillItem } from '@/types/app'
 
 const props = withDefaults(defineProps<{
@@ -15,6 +15,8 @@ const props = withDefaults(defineProps<{
   restoredLabel?: string
   skillPolicy?: SkillUsePolicy
   availableSkills?: ProjectSkillItem[]
+  turnPreview?: AssistantTurnPreview | null
+  isPreviewing?: boolean
 }>(), {
   skillPolicy: () => ({ mode: 'auto', skillIds: [] }),
   availableSkills: () => []
@@ -27,6 +29,7 @@ const emit = defineEmits<{
   (e: 'edit-last'): void
   (e: 'clear-restored'): void
   (e: 'update:skill-policy', value: SkillUsePolicy): void
+  (e: 'preview'): void
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -43,6 +46,18 @@ const sendDisabled = computed(() => (
   || !props.modelValue.trim()
   || (props.skillPolicy.mode === 'only' && props.skillPolicy.skillIds.length === 0)
 ))
+
+function contextStateLabel(state: AssistantTurnPreview['contextItems'][number]['state']): string {
+  if (state === 'compressed') return '已压缩'
+  if (state === 'omitted') return '按需读取'
+  return '已加载'
+}
+
+function skillStateLabel(state: AssistantTurnPreview['skills'][number]['state']): string {
+  if (state === 'loaded') return '已读取'
+  if (state === 'injected') return '已注入'
+  return '候选'
+}
 
 function setSkillMode(mode: SkillUseMode): void {
   emit('update:skill-policy', { ...props.skillPolicy, mode })
@@ -110,6 +125,62 @@ watch(
         <button type="button" title="清除回填内容" aria-label="清除回填内容" @click="emit('clear-restored')">
           <X :size="11" />
         </button>
+      </div>
+      <div v-if="props.modelValue.trim()" class="turn-preview-row">
+        <NPopover trigger="click" placement="top-start" :show-arrow="false" :disabled="props.isStreaming || props.isEditing">
+          <template #trigger>
+            <button
+              type="button"
+              class="turn-preview-trigger"
+              :disabled="props.isStreaming || props.isEditing"
+              @click="emit('preview')"
+            >
+              <LoaderCircle v-if="props.isPreviewing" :size="12" class="spin" />
+              <ClipboardList v-else :size="12" />
+              <template v-if="props.turnPreview">
+                {{ props.turnPreview.intentLabel }} · {{ props.turnPreview.contextItems.length }} 类资料 · {{ props.turnPreview.skills.length }} 个 Skill
+              </template>
+              <template v-else>{{ props.isPreviewing ? '正在规划本轮…' : '查看本轮会怎样执行' }}</template>
+            </button>
+          </template>
+          <div class="turn-preview-popover">
+            <div class="preview-head">
+              <strong>本轮执行预览</strong>
+              <span>只在本地规划，不调用模型</span>
+            </div>
+            <div v-if="props.isPreviewing" class="preview-loading">正在核对上下文和 Skill…</div>
+            <template v-else-if="props.turnPreview">
+              <div class="preview-summary">
+                <span>任务：{{ props.turnPreview.intentLabel }}</span>
+                <span>模型：{{ props.turnPreview.provider }} / {{ props.turnPreview.model }}</span>
+                <span>调用：{{ props.turnPreview.estimatedModelCalls }}，最多 {{ props.turnPreview.maxModelCalls }} 轮</span>
+                <span>{{ props.turnPreview.writesToStaging ? '修改进入暂存区确认' : '本轮默认只回复，不直接写入' }}</span>
+              </div>
+              <div class="preview-section">
+                <strong>将使用的资料</strong>
+                <div class="preview-chips">
+                  <span v-for="item in props.turnPreview.contextItems" :key="item.providerId" :class="item.state">
+                    {{ item.label }} · {{ contextStateLabel(item.state) }}
+                  </span>
+                </div>
+                <small>预计上下文约 {{ props.turnPreview.contextUsedTokens.toLocaleString('zh-CN') }} tokens</small>
+              </div>
+              <div class="preview-section">
+                <strong>Skill</strong>
+                <div v-if="props.turnPreview.skills.length" class="preview-chips">
+                  <span v-for="skill in props.turnPreview.skills" :key="skill.id">
+                    {{ skill.name }} · {{ skillStateLabel(skill.state) }}
+                  </span>
+                </div>
+                <small v-else>本轮不会注入 Skill。</small>
+              </div>
+              <div v-if="props.turnPreview.warnings.length" class="preview-warnings">
+                <span v-for="warning in props.turnPreview.warnings" :key="warning">{{ warning }}</span>
+              </div>
+            </template>
+            <div v-else class="preview-loading">点击后生成准确预览。</div>
+          </div>
+        </NPopover>
       </div>
       <textarea
         ref="textareaRef"
@@ -253,6 +324,73 @@ watch(
 }
 .restored-draft button:hover {
   background: color-mix(in srgb, var(--arc-primary) 12%, transparent);
+}
+.turn-preview-row {
+  display: flex;
+  min-width: 0;
+}
+.turn-preview-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--arc-primary) 24%, var(--arc-border));
+  border-radius: 999px;
+  background: var(--arc-primary-soft);
+  color: var(--arc-primary);
+  font-size: 10.5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-preview-trigger:disabled { cursor: not-allowed; opacity: 0.55; }
+.spin { animation: previewSpin 0.9s linear infinite; }
+@keyframes previewSpin { to { transform: rotate(360deg); } }
+.turn-preview-popover {
+  width: min(420px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px;
+}
+.preview-head,
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.preview-head span,
+.preview-section small,
+.preview-loading {
+  color: var(--arc-text-hint);
+  font-size: 11px;
+}
+.preview-summary {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--arc-primary-soft);
+  color: var(--arc-text-secondary);
+  font-size: 11px;
+}
+.preview-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.preview-chips span {
+  padding: 3px 7px;
+  border: 1px solid var(--arc-border);
+  border-radius: 999px;
+  color: var(--arc-text-secondary);
+  font-size: 10.5px;
+}
+.preview-chips span.compressed,
+.preview-chips span.omitted { color: #b45309; border-color: rgba(180, 83, 9, 0.25); }
+.preview-warnings {
+  display: grid;
+  gap: 4px;
+  color: #b45309;
+  font-size: 11px;
 }
 textarea {
   width: 100%;

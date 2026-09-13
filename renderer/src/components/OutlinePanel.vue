@@ -16,6 +16,7 @@ import type { DropdownOption, SelectOption } from 'naive-ui'
 import type { OutlineImportNewVolume, OutlineImportPlanEntry, OutlineImportVolumeUpdate, OutlineItem, OutlineItemStatus, OutlineVolume } from '@/types/app'
 import AiEnhancePreview from './AiEnhancePreview.vue'
 import type { EnhanceFieldDiff } from './AiEnhancePreview.vue'
+import { buildEnhanceTagLabels } from '@/features/ai/enhancePreview'
 import { useIncrementalList } from '@/composables/useIncrementalList'
 
 const props = defineProps<{
@@ -1754,9 +1755,9 @@ async function handleAiEnhanceItem(): Promise<void> {
       { key: 'wordTarget', label: '预估字数', type: 'text', original: form.wordTarget, suggested: suggestedWordTarget, changed: suggestedWordTarget !== form.wordTarget },
       { key: 'conflict', label: '核心冲突', type: 'text', original: form.conflict, suggested: suggested.conflict ?? '', changed: (suggested.conflict ?? '') !== form.conflict && Boolean(suggested.conflict?.trim()) },
       { key: 'summary', label: '剧情描述', type: 'textarea', original: form.summary, suggested: suggested.summary ?? '', changed: (suggested.summary ?? '') !== form.summary && Boolean(suggested.summary?.trim()) },
-      { key: 'relatedCharacterIds', label: '关联角色', type: 'tags', original: form.relatedCharacterIds, suggested: suggestedCharacterIds, changed: JSON.stringify(suggestedCharacterIds) !== JSON.stringify(form.relatedCharacterIds) },
-      { key: 'relatedOrganizationIds', label: '关联组织', type: 'tags', original: form.relatedOrganizationIds, suggested: suggestedOrganizationIds, changed: JSON.stringify(suggestedOrganizationIds) !== JSON.stringify(form.relatedOrganizationIds) },
-      { key: 'relatedWorldviewIds', label: '关联设定', type: 'tags', original: form.relatedWorldviewIds, suggested: suggestedWorldviewIds, changed: JSON.stringify(suggestedWorldviewIds) !== JSON.stringify(form.relatedWorldviewIds) }
+      { key: 'relatedCharacterIds', label: '关联角色', type: 'tags', original: form.relatedCharacterIds, suggested: suggestedCharacterIds, changed: JSON.stringify(suggestedCharacterIds) !== JSON.stringify(form.relatedCharacterIds), tagLabels: buildEnhanceTagLabels(characterOptions.value) },
+      { key: 'relatedOrganizationIds', label: '关联组织', type: 'tags', original: form.relatedOrganizationIds, suggested: suggestedOrganizationIds, changed: JSON.stringify(suggestedOrganizationIds) !== JSON.stringify(form.relatedOrganizationIds), tagLabels: buildEnhanceTagLabels(organizationOptions.value) },
+      { key: 'relatedWorldviewIds', label: '关联设定', type: 'tags', original: form.relatedWorldviewIds, suggested: suggestedWorldviewIds, changed: JSON.stringify(suggestedWorldviewIds) !== JSON.stringify(form.relatedWorldviewIds), tagLabels: buildEnhanceTagLabels(worldviewOptions.value) }
     ]
     enhanceItemVisible.value = true
   } catch (error) {

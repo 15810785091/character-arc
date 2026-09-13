@@ -1097,7 +1097,7 @@ async function commitKnowledgeDocument(
   const metadata = payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
     ? payload.metadata
     : {}
-  const validSourceTypes = ['reference-summary', 'reference-chunk', 'workflow-document', 'canon-fact', 'chapter-summary']
+  const validSourceTypes = ['reference-summary', 'reference-chunk', 'workflow-document', 'canon-fact', 'audit-report', 'chapter-summary']
   if (!title || !content || !validSourceTypes.includes(sourceType)) {
     return { changeId: change.id, ok: false, error: '知识文档缺少合法的 title、sourceType 或 content' }
   }

@@ -114,7 +114,7 @@ export type AiTaskName =
 export type AiRunKnowledgeItem = {
   documentId: string
   title: string
-  sourceType: 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'chapter-summary'
+  sourceType: 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'audit-report' | 'chapter-summary'
   sourceLabel: string
   snippet: string
   keywords: string[]
@@ -175,7 +175,7 @@ export type ToolCallTrace = {
  */
 export type AiKnowledgeDocumentDraft = {
   title: string
-  sourceType: 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'chapter-summary'
+  sourceType: 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'audit-report' | 'chapter-summary'
   sourceLabel: string
   content: string
   summary?: string

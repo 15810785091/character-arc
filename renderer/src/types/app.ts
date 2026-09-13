@@ -9,7 +9,7 @@ export type ThemeName = 'ocean' | 'jade' | 'amber' | 'rose'
 export type DarkModeStyle = 'nord'
 
 /** 工作台面板名称 */
-export type PanelName = 'workflow' | 'overview' | 'deconstruction' | 'project-knowledge' | 'world' | 'characters' | 'relations' | 'inspiration' | 'outline' | 'threads' | 'chapters' | 'settings' | 'global-assistant' | 'global-assistant-v2'
+export type PanelName = 'workflow' | 'overview' | 'story-data' | 'deconstruction' | 'project-knowledge' | 'world' | 'characters' | 'relations' | 'inspiration' | 'outline' | 'threads' | 'chapters' | 'settings' | 'global-assistant' | 'global-assistant-v2'
 
 /** 小说流程阶段标识 */
 export type NovelWorkflowStageId = 'reference' | 'premise' | 'setting' | 'outline' | 'draft'
@@ -605,6 +605,7 @@ export type KnowledgeDocumentSourceType =
   | 'reference-chunk'
   | 'workflow-document'
   | 'canon-fact'
+  | 'audit-report'
   | 'chapter-summary'
 
 /** 知识文档；参考资料为全局作用域，项目知识通过 projectId 隔离 */

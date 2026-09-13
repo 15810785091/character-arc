@@ -20,7 +20,7 @@ import { filterProjectKnowledgeDocuments } from './knowledge-document-scope'
 // ─────────────────────────────────────────────────────────────
 
 /** 知识文档来源类型 */
-type KnowledgeDocumentSourceType = 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'chapter-summary'
+type KnowledgeDocumentSourceType = 'reference-summary' | 'reference-chunk' | 'workflow-document' | 'canon-fact' | 'audit-report' | 'chapter-summary'
 
 /** 工作区知识文档在 SQLite 中的完整结构 */
 type WorkspaceKnowledgeDocument = {
@@ -85,6 +85,7 @@ function isProjectKnowledgeSource(sourceType: KnowledgeDocumentSourceType): bool
 function resolveKnowledgeSourceBaseScore(sourceType: KnowledgeDocumentSourceType): number {
   switch (sourceType) {
     case 'canon-fact': return 3.4
+    case 'audit-report': return 0
     case 'chapter-summary': return 2.8
     case 'workflow-document': return 2.4
     case 'reference-summary': return 1.4
@@ -148,7 +149,14 @@ export function retrieveKnowledgeContext(
   // 知识文档统一存放在快照顶层，而非 workspaces[projectId] 下。
   const allDocuments = Array.isArray(latestWorkspaceSnapshot.knowledgeDocuments) ? latestWorkspaceSnapshot.knowledgeDocuments : []
   // 参考资料只在用户显式选择参考书时注入；项目知识必须严格匹配当前项目。
+  // 审计报告描述的是风险和建议，不是世界事实；禁止把它作为写作事实反向注入。
   const documents = filterProjectKnowledgeDocuments(allDocuments, projectId)
+    .filter((document) =>
+      document.sourceType !== 'audit-report'
+      && document.sourceLabel !== 'story-deep-audit'
+      && document.sourceLabel !== 'chapter-draft-checkpoint'
+      && document.sourceLabel !== 'chapter-writing-contract'
+    )
   if (!documents.length) {
     return { usedKnowledge: [] }
   }

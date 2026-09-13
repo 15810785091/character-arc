@@ -18,6 +18,7 @@ const KNOWLEDGE_SOURCE_TYPES = new Set([
   'reference-chunk',
   'workflow-document',
   'canon-fact',
+  'audit-report',
   'chapter-summary'
 ])
 

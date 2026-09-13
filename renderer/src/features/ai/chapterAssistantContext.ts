@@ -153,6 +153,15 @@ export type ChapterFirstDraftContextInput = {
   chapterContent: string
   targetWordCount: number
   userPrompt: string
+  chapterContract?: {
+    goal: string
+    pov: string
+    timeAndPlace: string
+    conflict: string
+    mustHappen: string[]
+    forbidden: string[]
+    endingHook: string
+  }
   chapterMemo?: {
     currentTask: string
     readerExpectation: string
@@ -539,7 +548,11 @@ export function buildChapterAssistantContext(input: ChapterAssistantContextInput
   }
 }
 
-export function buildChapterFirstDraftContext(input: ChapterFirstDraftContextInput): Record<string, unknown> {
+/**
+ * 为章节创作准备唯一的写作包。备忘、初稿、审计等阶段都基于它派生，
+ * 避免各阶段重复拼装全量项目资料并造成上下文漂移。
+ */
+export function buildChapterWritingPacket(input: ChapterFirstDraftContextInput): Record<string, unknown> {
   const writingStyle = buildProjectWritingStyleContext(input.project)
   const normalizedChapterContent = input.chapterContent.trim()
   const relevantReferenceData = selectRelevantReferenceData({
@@ -643,9 +656,15 @@ export function buildChapterFirstDraftContext(input: ChapterFirstDraftContextInp
     ...(input.projectSkills !== undefined ? { projectSkills: input.projectSkills } : {}),
     ...(input.skillPolicy !== undefined ? { skillPolicy: input.skillPolicy } : {}),
     userPrompt: input.userPrompt,
+    chapterContract: input.chapterContract ?? null,
     chapterMemo: input.chapterMemo ?? null,
     recentEndingsTrail: input.recentEndingsTrail ?? [],
     previousChapterHandoff: input.previousChapterHandoff ?? null,
     referenceStyleContext: input.referenceStyleContext ?? ''
   }
+}
+
+/** @deprecated 使用 buildChapterWritingPacket；保留名称兼容旧调用。 */
+export function buildChapterFirstDraftContext(input: ChapterFirstDraftContextInput): Record<string, unknown> {
+  return buildChapterWritingPacket(input)
 }

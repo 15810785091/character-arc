@@ -14,6 +14,11 @@ import type { SnapshotAccessor } from '../providers/shared'
 import { getProjectView } from '../providers/shared'
 import type { WorkflowDocumentKey } from '../../../workspace-types'
 import { validateOutlineNarrativeUpdate } from '@shared/outline-update-policy'
+import {
+  attachImpactWarnings,
+  buildDeleteImpactWarnings,
+  buildOutlineUpdateImpactWarnings
+} from '../change-impact'
 
 export interface StageEntitiesToolDeps {
   sessionId: string
@@ -356,7 +361,8 @@ export function makeStageWorldviewTool(deps: StageEntitiesToolDeps): Tool {
           entityTitle: before.title,
           reason,
           before: renderWorldviewText(before),
-          after: ''
+          after: '',
+          entityPayload: attachImpactWarnings({}, buildDeleteImpactWarnings(view.workspace, 'worldview', before.id))
         })
         return { content: `已暂存世界观删除（change_id=${change.id}）：${before.title}。尚未写回，需用户确认。` }
       }
@@ -468,7 +474,8 @@ export function makeStageCharacterTool(deps: StageEntitiesToolDeps): Tool {
           entityTitle: before.name,
           reason,
           before: renderCharacterText(before),
-          after: ''
+          after: '',
+          entityPayload: attachImpactWarnings({}, buildDeleteImpactWarnings(view.workspace, 'character', before.id))
         })
         return { content: `已暂存人物删除（change_id=${change.id}）：${before.name}。尚未写回，需用户确认。` }
       }
@@ -623,7 +630,8 @@ export function makeStageOutlineTool(deps: StageEntitiesToolDeps): Tool {
           entityTitle: before.title,
           reason,
           before: renderOutlineText(before),
-          after: ''
+          after: '',
+          entityPayload: attachImpactWarnings({}, buildDeleteImpactWarnings(view.workspace, 'outline', before.id))
         })
         return { content: `已暂存大纲删除（change_id=${change.id}）：${before.title}。尚未写回，需用户确认。` }
       }
@@ -662,7 +670,12 @@ export function makeStageOutlineTool(deps: StageEntitiesToolDeps): Tool {
         reason,
         before: renderOutlineText(before),
         after: renderOutlineText({ ...payload, volumeTitle: volume.title }),
-        entityPayload: payload
+        entityPayload: attachImpactWarnings(payload, buildOutlineUpdateImpactWarnings({
+          previousSummary: before.summary,
+          nextSummary: payload.summary,
+          previousConflict: before.conflict,
+          nextConflict: payload.conflict
+        }))
       })
       return { content: `已暂存大纲修改（change_id=${change.id}）：${before.title}，所属分卷：${volume.title}。尚未写回，需用户确认。` }
     }
@@ -746,7 +759,8 @@ export function makeStageOrganizationTool(deps: StageEntitiesToolDeps): Tool {
           entityTitle: before.name,
           reason,
           before: renderOrganizationText(before),
-          after: ''
+          after: '',
+          entityPayload: attachImpactWarnings({}, buildDeleteImpactWarnings(view.workspace, 'organization', before.id))
         })
         return { content: `已暂存组织删除（change_id=${change.id}）：${before.name}。尚未写回，需用户确认。` }
       }

@@ -65,7 +65,7 @@ function parseStateDeltaYaml(yaml: string, warnings: string[]): StateDelta | nul
     const delta: StateDelta = {
       characters_updated: [],
       relationships_delta: [],
-      foreshadowing_delta: { planted: [], advanced: [], resolved: [] },
+      foreshadowing_delta: { planted: [], advanced: [], resolved: [], abandoned: [] },
       timeline: { story_time_elapsed: '', current_story_date: '', events: [] }
     }
 
@@ -79,6 +79,7 @@ function parseStateDeltaYaml(yaml: string, warnings: string[]): StateDelta | nul
       || delta.foreshadowing_delta.planted.length > 0
       || delta.foreshadowing_delta.advanced.length > 0
       || delta.foreshadowing_delta.resolved.length > 0
+      || delta.foreshadowing_delta.abandoned.length > 0
       || delta.timeline.events.length > 0
 
     if (!hasContent) {
@@ -162,11 +163,17 @@ function parseRelationshipsDelta(yaml: string, _warnings: string[]): StateDelta[
     const statusFrom = extractValue(block, 'from')
     const pivotEvent = extractValue(block, 'pivot_event')
     const tensionPoints = extractList(block, 'new_tension_points')
+    const resolvedTensionPoints = extractList(block, 'resolved_tension_points')
+    const lifecycle = extractValue(block, 'lifecycle')
 
     results.push({
       relationship_id: relId,
       status_change: statusTo ? { from: statusFrom || '', to: statusTo, pivot_event: pivotEvent || '' } : undefined,
-      new_tension_points: tensionPoints.length ? tensionPoints : undefined
+      new_tension_points: tensionPoints.length ? tensionPoints : undefined,
+      resolved_tension_points: resolvedTensionPoints.length ? resolvedTensionPoints : undefined,
+      lifecycle: lifecycle === 'active' || lifecycle === 'dormant' || lifecycle === 'archived'
+        ? lifecycle
+        : undefined
     })
   }
 
@@ -175,7 +182,7 @@ function parseRelationshipsDelta(yaml: string, _warnings: string[]): StateDelta[
 
 /** 从 YAML 中解析 foreshadowing_delta 块（埋设 / 推进 / 回收伏笔）。 */
 function parseForeshadowingDelta(yaml: string, _warnings: string[]): StateDelta['foreshadowing_delta'] {
-  const result: StateDelta['foreshadowing_delta'] = { planted: [], advanced: [], resolved: [] }
+  const result: StateDelta['foreshadowing_delta'] = { planted: [], advanced: [], resolved: [], abandoned: [] }
 
   const section = extractSection(yaml, 'foreshadowing_delta')
   if (!section) return result
@@ -217,6 +224,18 @@ function parseForeshadowingDelta(yaml: string, _warnings: string[]): StateDelta[
         id: match[1].trim(),
         method: extractValue(match[2], 'method') || '',
         impact: extractValue(match[2], 'impact') || ''
+      })
+    }
+  }
+
+  const abandonedSection = extractSection(section, 'abandoned')
+  if (abandonedSection) {
+    const itemRegex = /- id:\s*["']?([^"'\n]+)["']?\s*\n([\s\S]*?)(?=\n\s*- id:|$)/g
+    let match: RegExpExecArray | null
+    while ((match = itemRegex.exec(abandonedSection)) !== null) {
+      result.abandoned.push({
+        id: match[1].trim(),
+        reason: extractValue(match[2], 'reason') || ''
       })
     }
   }

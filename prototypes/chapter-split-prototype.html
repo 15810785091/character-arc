@@ -1,0 +1,217 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway UI, not production code.
+  Question: how should a paragraph-safe “split chapter into N chapters” flow look inside Chapter Studio?
+  Three variants, switchable with ?variant=A|B|C.
+  Run: python3 -m http.server 4174 -d prototypes
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>章节拆分交互原型</title>
+  <style>
+    :root {
+      --bg: #f4f7fa;
+      --panel: #ffffff;
+      --line: #dfe7ee;
+      --ink: #17212b;
+      --muted: #718090;
+      --brand: #2587a7;
+      --brand-soft: #e8f5f8;
+      --warn: #a86716;
+      --shadow: 0 20px 55px rgba(33, 56, 72, .18);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 1080px; height: 100vh; overflow: hidden; color: var(--ink); background: var(--bg); font: 14px/1.5 Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .app { display: grid; grid-template-columns: 268px 1fr 330px; height: 100vh; }
+    .left, .right { background: #f8fbfd; border-color: var(--line); border-style: solid; }
+    .left { border-width: 0 1px 0 0; }
+    .right { border-width: 0 0 0 1px; padding: 22px; }
+    .brand { height: 58px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid var(--line); font-weight: 700; }
+    .logo { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; color: white; background: var(--brand); }
+    .book { padding: 16px 12px; }
+    .volume { margin-bottom: 10px; color: #516170; font-size: 12px; font-weight: 700; }
+    .chapter { position: relative; display: grid; grid-template-columns: 18px 22px 1fr auto; align-items: center; gap: 5px; height: 45px; padding: 0 8px; border-radius: 8px; color: #52616f; }
+    .chapter.active { color: var(--ink); background: #eaf3f7; }
+    .dots { color: #a9b5bf; letter-spacing: -1px; }
+    .doc { color: #78909c; }
+    .status { padding: 2px 6px; border-radius: 9px; background: #e9f0e8; color: #4d7152; font-size: 11px; }
+    .kebab { border: 0; padding: 4px; color: #4c5d69; background: transparent; font-size: 18px; }
+    .menu { position: absolute; z-index: 20; right: 8px; top: 40px; width: 156px; padding: 7px; border: 1px solid #e4e9ed; border-radius: 10px; background: white; box-shadow: 0 12px 30px rgba(34, 55, 68, .18); }
+    .menu button { width: 100%; padding: 9px 11px; border: 0; border-radius: 7px; text-align: left; color: #374957; background: transparent; }
+    .menu button:hover, .menu button.selected { color: var(--brand); background: var(--brand-soft); }
+    .center { overflow: hidden; background: white; }
+    .topbar { height: 58px; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; border-bottom: 1px solid var(--line); }
+    .chapter-title { font-weight: 700; }
+    .save { color: var(--muted); font-size: 12px; }
+    .editor { max-width: 760px; height: calc(100vh - 58px); margin: auto; padding: 54px 54px 130px; overflow: auto; }
+    .editor h1 { margin: 0 0 36px; font: 700 28px/1.3 Georgia, "Songti SC", serif; }
+    .para { margin: 0 0 22px; text-indent: 2em; color: #34434f; font: 16px/2 Georgia, "Songti SC", serif; }
+    .right h3 { margin: 0 0 8px; }
+    .right p { color: var(--muted); }
+    .tag { display: inline-block; margin: 5px 4px 0 0; padding: 5px 9px; border-radius: 14px; color: #477181; background: var(--brand-soft); font-size: 12px; }
+    .overlay { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; background: rgba(30, 45, 55, .38); backdrop-filter: blur(2px); }
+    .modal { width: 720px; border-radius: 16px; background: white; box-shadow: var(--shadow); overflow: hidden; }
+    .modal-head { display: flex; justify-content: space-between; padding: 22px 26px 17px; border-bottom: 1px solid var(--line); }
+    .modal-head h2 { margin: 0 0 3px; font-size: 18px; }
+    .sub { color: var(--muted); font-size: 12px; }
+    .modal-body { padding: 22px 26px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .stepper { display: flex; align-items: center; overflow: hidden; border: 1px solid #cfdbe3; border-radius: 9px; }
+    .stepper button { width: 36px; height: 34px; border: 0; background: #f5f8fa; }
+    .stepper input { width: 50px; height: 34px; border: 0; border-inline: 1px solid #cfdbe3; text-align: center; outline: none; }
+    .notice { margin-bottom: 17px; padding: 11px 13px; border-radius: 9px; color: #50626f; background: #f2f7f9; font-size: 12px; }
+    .parts { display: grid; gap: 9px; }
+    .part { display: grid; grid-template-columns: 26px 1fr 64px; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+    .part strong { font-size: 13px; }
+    .part small { display: block; color: var(--muted); }
+    .num { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--brand); font-size: 11px; }
+    .count { color: #4b6674; text-align: right; font-size: 12px; }
+    .modal-foot { display: flex; align-items: center; justify-content: space-between; padding: 16px 26px 20px; }
+    .hint { color: var(--warn); font-size: 12px; }
+    .actions { display: flex; gap: 10px; }
+    .btn { padding: 8px 16px; border: 1px solid #cdd8df; border-radius: 9px; color: #344957; background: white; }
+    .btn.primary { border-color: var(--brand); color: white; background: var(--brand); }
+    .inline-card { position: fixed; z-index: 30; top: 162px; left: 248px; width: 386px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: var(--shadow); }
+    .inline-card h3 { margin: 0 0 4px; }
+    .range { width: 100%; accent-color: var(--brand); }
+    .bars { display: flex; gap: 7px; height: 56px; margin: 16px 0; align-items: end; }
+    .bar { flex: 1; border-radius: 5px 5px 2px 2px; background: #8ac1d2; }
+    .bar:nth-child(2) { background: #64a9bf; }
+    .bar:nth-child(3) { background: #3b91ac; }
+    .inline-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .cut-layout { position: fixed; z-index: 30; inset: 58px 330px 0 268px; display: grid; grid-template-columns: 1fr 270px; background: white; }
+    .cut-editor { padding: 34px 44px 130px; overflow: auto; }
+    .cut-editor h2 { margin-top: 0; }
+    .cut-segment { position: relative; margin: 0 0 18px; padding: 0 12px 15px; border-bottom: 2px solid #54a4bc; }
+    .cut-segment::after { content: attr(data-label); position: absolute; right: 4px; bottom: -13px; padding: 2px 7px; border-radius: 10px; color: white; background: #2587a7; font-size: 10px; }
+    .cut-segment p { margin: 0 0 13px; color: #3a4852; line-height: 1.8; text-indent: 2em; }
+    .cut-side { padding: 22px; border-left: 1px solid var(--line); background: #f8fbfc; }
+    .cut-side h3 { margin: 0 0 6px; }
+    .chapter-chip { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: white; }
+    .chapter-chip b { display: block; font-size: 12px; }
+    .chapter-chip small { color: var(--muted); }
+    .cut-side .btn { width: 100%; margin-top: 18px; }
+    .switcher { position: fixed; z-index: 100; left: 50%; bottom: 18px; display: flex; align-items: center; gap: 8px; padding: 7px; transform: translateX(-50%); border-radius: 999px; color: white; background: #162733; box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+    .switcher button { width: 32px; height: 32px; border: 0; border-radius: 50%; color: white; background: rgba(255,255,255,.12); }
+    .switcher span { min-width: 185px; text-align: center; font-size: 12px; }
+    .toast { position: fixed; z-index: 110; top: 20px; left: 50%; padding: 9px 15px; transform: translateX(-50%); border-radius: 9px; color: white; background: #223943; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="left">
+      <div class="brand"><span class="logo">弧</span>长夜行舟</div>
+      <div class="book">
+        <div class="volume">⌄ 第一卷：雾港来客</div>
+        <div class="chapter"><span class="dots">⠿</span><span class="doc">▤</span><span>第11章：雨幕来信</span><span class="status">定稿</span></div>
+        <div class="chapter active"><span class="dots">⠿</span><span class="doc">▤</span><span>第12章：钟楼回声</span><button class="kebab">⋮</button>
+          <div class="menu"><button>编辑章节信息</button><button class="selected">拆分章节</button><button>导出 TXT</button><button>删除章节</button></div>
+        </div>
+        <div class="chapter"><span class="dots">⠿</span><span class="doc">▤</span><span>第13章：旧船票</span><span class="status">草稿</span></div>
+      </div>
+    </aside>
+    <main class="center">
+      <div class="topbar"><span class="chapter-title">第12章：钟楼回声</span><span class="save">已自动保存 · 8,426 字</span></div>
+      <article class="editor">
+        <h1>第12章：钟楼回声</h1>
+        <p class="para">海雾漫过旧城区时，钟楼敲了十三下。林墨停在没有门牌的巷口，掌心里的船票被雨水浸得发软。</p>
+        <p class="para">巷子尽头亮起一盏灯。那盏灯三年前就该熄灭了，他却仍旧看见母亲站在窗后，对他做出噤声的手势。</p>
+        <p class="para">身后的脚步声越来越近。他没有回头，只把船票翻到背面。墨迹在水中慢慢显形，拼出今晚的第一个名字。</p>
+        <p class="para">钟声再响，整条街的窗户同时合拢。林墨终于明白，这封信不是邀请，而是一场早已开始的审判。</p>
+        <p class="para">他推门而入，潮湿的木梯一直通向地下。墙上的刻痕记录着失踪者的日期，其中最新的一道写着明天。</p>
+        <p class="para">地下室里没有人，只有一台仍在转动的录音机。母亲的声音从磁带里传出来，告诉他不要相信黎明。</p>
+      </article>
+    </main>
+    <aside class="right"><h3>章节上下文</h3><p>拆分后每一章仍处于同一分卷，并保持原顺序。</p><span class="tag">沈知夏</span><span class="tag">雾港</span><span class="tag">失踪案</span></aside>
+  </div>
+
+  <section id="variantA" class="variant">
+    <div class="overlay">
+      <div class="modal">
+        <div class="modal-head"><div><h2>拆分《第12章：钟楼回声》</h2><div class="sub">系统只在完整段落之间切分，不会截断句子或富文本格式。</div></div><span>✕</span></div>
+        <div class="modal-body">
+          <div class="row"><div><b>拆成几章</b><div class="sub">可拆 2–6 章，本章共有 18 个有效段落</div></div><div class="stepper"><button data-step="-1">−</button><input id="countInput" value="3" readonly /><button data-step="1">＋</button></div></div>
+          <div class="notice">已按段落字数自动均衡。拆分点会尽量靠近目标字数，不改变任何正文内容。</div>
+          <div id="partList" class="parts"></div>
+        </div>
+        <div class="modal-foot"><span class="hint">拆分前会保留原章节的历史版本</span><div class="actions"><button class="btn">取消</button><button class="btn primary" data-demo>确认拆分</button></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="variantB" class="variant">
+    <div class="inline-card">
+      <h3>快速拆分章节</h3><div class="sub">按段落均衡分配，不打断正文结构</div>
+      <div class="row" style="margin:18px 0 8px"><b>拆成 <span id="rangeValue">3</span> 章</b><span class="sub">预计每章约 2,809 字</span></div>
+      <input id="range" class="range" type="range" min="2" max="6" value="3" />
+      <div class="bars"><div class="bar" style="height:88%"></div><div class="bar" style="height:100%"></div><div class="bar" style="height:91%"></div></div>
+      <div class="sub">预览：2,731 字 · 2,936 字 · 2,759 字</div>
+      <div class="inline-actions" style="margin-top:16px"><button class="btn">取消</button><button class="btn primary" data-demo>拆分</button></div>
+    </div>
+  </section>
+
+  <section id="variantC" class="variant">
+    <div class="cut-layout">
+      <div class="cut-editor"><h2>拖动分隔线，决定每章在哪里结束</h2><div class="sub" style="margin-bottom:22px">分隔线只能吸附到段落之间。当前拆为 3 章。</div>
+        <div class="cut-segment" data-label="第 1 章结束 · 2,731 字"><p>海雾漫过旧城区时，钟楼敲了十三下。林墨停在没有门牌的巷口，掌心里的船票被雨水浸得发软。</p><p>巷子尽头亮起一盏灯。那盏灯三年前就该熄灭了，他却仍旧看见母亲站在窗后。</p></div>
+        <div class="cut-segment" data-label="第 2 章结束 · 2,936 字"><p>身后的脚步声越来越近。他没有回头，只把船票翻到背面。</p><p>钟声再响，整条街的窗户同时合拢。这封信不是邀请，而是一场早已开始的审判。</p></div>
+        <div class="cut-segment" data-label="第 3 章结束 · 2,759 字"><p>他推门而入，潮湿的木梯一直通向地下。墙上的刻痕记录着失踪者的日期。</p><p>地下室里没有人，只有一台仍在转动的录音机。母亲的声音告诉他不要相信黎明。</p></div>
+      </div>
+      <aside class="cut-side"><h3>章节结构预览</h3><div class="sub">可以重命名，正文不会被改写。</div><div class="chapter-chip"><b>第12章：钟楼回声（上）</b><small>6 段 · 2,731 字</small></div><div class="chapter-chip"><b>第12章：钟楼回声（中）</b><small>6 段 · 2,936 字</small></div><div class="chapter-chip"><b>第12章：钟楼回声（下）</b><small>6 段 · 2,759 字</small></div><button class="btn primary" data-demo>按当前位置拆分</button></aside>
+    </div>
+  </section>
+
+  <div class="switcher"><button id="prev">←</button><span id="variantLabel"></span><button id="next">→</button></div>
+  <div id="toast" class="toast">原型演示：不会写入任何数据</div>
+  <script>
+    const variants = [
+      { key: 'A', name: '确认弹窗 + 精确预览' },
+      { key: 'B', name: '菜单旁快速拆分' },
+      { key: 'C', name: '正文内可视化切点' }
+    ]
+    const params = new URLSearchParams(location.search)
+    let current = Math.max(0, variants.findIndex(v => v.key === (params.get('variant') || 'A').toUpperCase()))
+    const label = document.querySelector('#variantLabel')
+    function renderVariant() {
+      document.querySelectorAll('.variant').forEach(el => el.hidden = true)
+      const v = variants[current]
+      document.querySelector(`#variant${v.key}`).hidden = false
+      label.textContent = `${v.key} — ${v.name}`
+      const nextParams = new URLSearchParams(location.search)
+      nextParams.set('variant', v.key)
+      history.replaceState({}, '', `${location.pathname}?${nextParams}`)
+    }
+    function cycle(delta) { current = (current + delta + variants.length) % variants.length; renderVariant() }
+    document.querySelector('#prev').onclick = () => cycle(-1)
+    document.querySelector('#next').onclick = () => cycle(1)
+    addEventListener('keydown', event => {
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return
+      if (event.key === 'ArrowLeft') cycle(-1)
+      if (event.key === 'ArrowRight') cycle(1)
+    })
+    const countInput = document.querySelector('#countInput')
+    const partList = document.querySelector('#partList')
+    function renderParts() {
+      const count = Number(countInput.value)
+      const chars = [2731, 2936, 2759, 2812, 2698, 2771]
+      const suffix = (index) => count === 2
+        ? (index ? '（下）' : '（上）')
+        : count === 3
+          ? ['（上）', '（中）', '（下）'][index]
+          : `（${index + 1}/${count}）`
+      partList.innerHTML = Array.from({ length: count }, (_, index) => `<div class="part"><span class="num">${index + 1}</span><div><strong>第12章：钟楼回声${suffix(index)}</strong><small>第 ${index * 6 + 1}–${Math.min(18, (index + 1) * 6)} 段</small></div><span class="count">${chars[index].toLocaleString()} 字</span></div>`).join('')
+    }
+    document.querySelectorAll('[data-step]').forEach(button => button.onclick = () => { countInput.value = Math.min(6, Math.max(2, Number(countInput.value) + Number(button.dataset.step))); renderParts() })
+    const range = document.querySelector('#range')
+    range.oninput = () => document.querySelector('#rangeValue').textContent = range.value
+    document.querySelectorAll('[data-demo]').forEach(button => button.onclick = () => { const toast = document.querySelector('#toast'); toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 1600) })
+    renderParts()
+    renderVariant()
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@ import type { AiAgentStreamHandlers, AiRunUsage, AppSettings, ToolCallTrace } fr
 import { runCodexCli } from '../codex-cli'
 import { stripReasoningMarkup } from '../reasoning'
 import type { Tool, ToolContext } from './tools/types'
+import { resolveCodexHostToolName } from './codex-tool-name'
 import {
   buildCodexRoundInstruction,
   hasReachedCodexPromptBudget,
@@ -181,7 +182,7 @@ export function buildToolProtocolPrompt(tools: Tool[]): string {
     '1. 需要读取资料或生成暂存变更时，把调用写入 toolCalls，并把 finalText 留空。宿主执行后会把结果发给你继续处理。',
     '2. 已经得到足够结果时，toolCalls 传空数组，把面向用户的中文回复写入 finalText。',
     '3. 修改项目数据必须调用对应的 stage_* 工具进入暂存区，绝不能只在 finalText 里描述拟修改内容，也不要声称工具不可用。',
-    '4. 只能使用目录里列出的工具和参数；不得虚构工具名。',
+    '4. 只能使用目录里列出的工具和参数；不得虚构工具名。工具名是普通 JSON 字符串，下划线不要写成 Markdown 转义。',
     '',
     '【可用宿主工具目录】',
     JSON.stringify(catalog)
@@ -237,6 +238,7 @@ export async function runCodexToolAgent(
   if (params.disableTools || params.tools.length === 0) return await runTextOnly(params)
 
   const toolsByName = new Map(params.tools.map((tool) => [tool.definition.name, tool]))
+  const availableToolNames = new Set(toolsByName.keys())
   const traces: ToolCallTrace[] = []
   const observations: Array<{
     tool: string
@@ -357,11 +359,13 @@ export async function runCodexToolAgent(
 
     let stepHasError = false
     for (const [index, call] of envelope.toolCalls.entries()) {
+      const resolvedToolName = resolveCodexHostToolName(call.name, availableToolNames)
+      const reportedToolName = resolvedToolName ?? call.name
       const toolUseId = `codex-${step}-${index + 1}`
       const startedAt = Date.now()
-      params.handlers.onToolUseStart(toolUseId, call.name, call.arguments)
+      params.handlers.onToolUseStart(toolUseId, reportedToolName, call.arguments)
 
-      const fingerprint = `${call.name}:${stableStringify(call.arguments)}`
+      const fingerprint = `${reportedToolName}:${stableStringify(call.arguments)}`
       const cached = seenResults.get(fingerprint)
       let content = ''
       let isError = false
@@ -369,7 +373,7 @@ export async function runCodexToolAgent(
         content = `（相同工具和参数已执行过，未重复写入。）\n${cached.content}`
         isError = cached.isError
       } else {
-        const tool = toolsByName.get(call.name)
+        const tool = resolvedToolName ? toolsByName.get(resolvedToolName) : undefined
         if (!tool) {
           content = `未知宿主工具：${call.name}。请只使用可用工具目录中的名称。`
           isError = true
@@ -389,19 +393,19 @@ export async function runCodexToolAgent(
       const durationMs = Date.now() - startedAt
       params.handlers.onToolResult(
         toolUseId,
-        call.name,
+        reportedToolName,
         content.slice(0, 800),
         isError,
         durationMs
       )
       traces.push({
-        tool: call.name,
+        tool: reportedToolName,
         args: call.arguments,
         durationMs,
         status: isError ? 'error' : 'ok',
         ...(isError ? { error: content.slice(0, 240) } : {})
       })
-      observations.push({ tool: call.name, arguments: call.arguments, content, isError })
+      observations.push({ tool: reportedToolName, arguments: call.arguments, content, isError })
       stepHasError ||= isError
     }
 

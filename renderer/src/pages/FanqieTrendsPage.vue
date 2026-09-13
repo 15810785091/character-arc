@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Bookmark, BookmarkCheck, CheckCircle2, ChevronLeft, CircleAlert, Copy, ExternalLink, Flame, History, Lightbulb, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { marked } from 'marked'
 import { NButton, NCard, NModal, NSelect, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
-import { renderMarkdown } from '@/composables/useGlobalAssistant'
 import { toIpcPayload } from '@/utils/ipcPayload'
 import {
   buildQimaoViewData,
@@ -19,6 +19,10 @@ import { createSerialSaveQueue } from '@/features/ranking/rankingScanPersistence
 
 const appStore = useAppStore()
 const message = useMessage()
+
+function renderMarkdown(content: string): string {
+  return marked.parse(content, { async: false }) as string
+}
 
 type Platform = 'fanqie' | 'qidian' | 'qimao' | 'zongheng'
 type ScanStage = 'setup' | 'running' | 'error' | 'report' | 'ideating' | 'idea-error' | 'ideas' | 'cancelled'
@@ -3208,4 +3212,3 @@ onBeforeUnmount(() => {
   .ranking-scan-footer__actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
 </style>
-
